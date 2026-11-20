@@ -1,0 +1,106 @@
+/*
+ * v8 workbench. The visual standard is work/claude-v8-direction-20261113/prototype/works.html; numbers here are
+ * copied from it. Everything is scoped under .v8 so the old screens are untouched.
+ * Day and night follow the app theme (data-cth-theme on <html>).
+ */
+.v8 {
+  --page: #f1eadb; --paper: #fbf8f1; --paper2: #efe6d3; --ink: #15120f; --ink2: #4f4539; --ink3: #8a7c68; --hair: #d9cdb6;
+  --amber: #d9a441; --amber2: #f0cf86; --moss: #5f7f36; --brick: #9c3d2e; --teal: #3f6f70;
+  --edge: #15120f; --shadow: #15120f; --cut: #fbf8f1; --dot: rgba(21, 18, 15, .16);
+  --display: "Arial Black", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --text: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --mono: "Cascadia Mono", "Consolas", "Microsoft YaHei UI", monospace;
+  position: fixed; inset: 0; overflow: hidden; background: var(--page); color: var(--ink); font-family: var(--text);
+}
+:root[data-cth-theme=dark] .v8 {
+  --page: #12100d; --paper: #211c16; --paper2: #2b241d; --ink: #f2e8d5; --ink2: #c9bda6; --ink3: #8d806c; --hair: #3a3128;
+  --amber: #e0b25a; --amber2: #6b5220; --moss: #8fae5c; --brick: #d0705e; --teal: #74a9aa;
+  --edge: #5a4d3d; --shadow: #000; --cut: #f2e8d5; --dot: rgba(242, 232, 213, .10);
+}
+.v8 *, .v8 *::before, .v8 *::after { box-sizing: border-box; margin: 0; padding: 0; }
+.v8 button { font-family: inherit; cursor: pointer; }
+.v8 :focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
+
+/* ---------- the canvas: one 1440×920 screen, scaled to fit, never scrolls ---------- */
+.v8-canvas { position: absolute; left: 50%; top: 0; width: 1440px; height: 920px; transform-origin: top center; }
+
+/* ---------- shared pieces ---------- */
+.v8-cap { font: 700 10.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); white-space: nowrap; }
+.v8-sticker { background: var(--paper); border: 2px solid var(--edge); border-radius: 14px; box-shadow: 4px 4px 0 var(--shadow); }
+:root[data-cth-theme=dark] .v8 .v8-sticker { border-color: #5a4d3d; }
+/* A gremlin is a sticker: white cut line all round, a hard shadow under it. */
+.v8 .v8-g { filter: drop-shadow(2px 0 0 var(--cut)) drop-shadow(-2px 0 0 var(--cut)) drop-shadow(0 2px 0 var(--cut)) drop-shadow(0 -2px 0 var(--cut)) drop-shadow(3px 4px 0 rgba(0, 0, 0, .28)); user-select: none; -webkit-user-drag: none; }
+.v8-dots { position: absolute; inset: 0; background-image: radial-gradient(var(--dot) 1.3px, transparent 1.6px); background-size: 14px 14px;
+  -webkit-mask-image: radial-gradient(ellipse 52% 62% at 50% 52%, #000 30%, transparent 78%); mask-image: radial-gradient(ellipse 52% 62% at 50% 52%, #000 30%, transparent 78%); }
+
+/* ---------- top bar ---------- */
+.v8-top { position: absolute; left: 28px; right: 28px; top: 18px; height: 52px; display: flex; align-items: center; gap: 18px; }
+.v8-logo { background: var(--ink); color: var(--amber); font: 900 19px/1 var(--display); letter-spacing: .01em; padding: 11px 14px 10px; border-radius: 9px; transform: rotate(-1.6deg); box-shadow: 3px 3px 0 var(--amber); white-space: nowrap; }
+:root[data-cth-theme=dark] .v8 .v8-logo { background: var(--amber); color: #15120f; box-shadow: 3px 3px 0 #000; }
+.v8-back { font: 800 13px/1 var(--text); padding: 10px 13px; border-radius: 10px; border: 2px solid var(--edge); background: var(--paper); color: var(--ink); box-shadow: 3px 3px 0 var(--shadow); white-space: nowrap; flex-shrink: 0; }
+.v8-crumb { font: 700 15px/1 var(--text); white-space: nowrap; }
+.v8-crumb span { color: var(--ink3); font-weight: 500; margin: 0 8px; }
+.v8-stats { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+.v8-stat { min-width: 112px; padding: 8px 12px 9px; border-radius: 11px; background: var(--paper); border: 1.5px solid var(--hair); }
+.v8-stat b { display: block; font: 900 22px/1 var(--display); margin-top: 6px; }
+.v8-stat b i { font: 500 12px var(--mono); color: var(--ink3); font-style: normal; margin-left: 3px; }
+.v8-stat.is-hot { border-color: #15120f; background: var(--amber); color: #15120f; box-shadow: 3px 3px 0 var(--shadow); }
+.v8-stat.is-hot .v8-cap { color: #4a3a14; }
+.v8-icon-btn { width: 44px; height: 44px; border-radius: 12px; font-size: 18px; color: var(--ink); display: grid; place-items: center; }
+.v8-quiet-btn { font: 700 12px/1 var(--text); color: var(--ink3); background: transparent; border: 1.5px dashed var(--ink3); border-radius: 999px; padding: 8px 11px; white-space: nowrap; }
+
+/* ---------- empty stage (F1) ---------- */
+.v8-stage { position: absolute; left: 0; top: 74px; width: 1440px; height: 590px; }
+.v8-empty { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: grid; justify-items: center; gap: 18px; text-align: center; }
+.v8-empty img { height: 200px; }
+.v8-empty h1 { font: 900 30px/1.3 var(--text); }
+.v8-empty p { font: 500 15px/1.6 var(--text); color: var(--ink2); max-width: 520px; }
+
+@media (prefers-reduced-motion: reduce) { .v8 *, .v8 *::before, .v8 *::after { animation: none !important; transition: none !important; } }
+
+/* Page changes: the clicked gremlin flies between the board and its page; everything else crossfades. */
+::view-transition-group(v8-hero) { animation-duration: .55s; animation-timing-function: cubic-bezier(.2, .9, .2, 1); }
+::view-transition-old(root) { animation: v8-vout .22s ease both; }
+::view-transition-new(root) { animation: v8-vin .38s ease .12s both; }
+@keyframes v8-vout { to { opacity: 0; transform: scale(.985); } }
+@keyframes v8-vin { from { opacity: 0; transform: translateY(14px); } }
+@media (prefers-reduced-motion: reduce) { ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; } }
+
+/* A refused action, shown for a few seconds under the top bar. */
+.v8-notice { position: absolute; left: 50%; top: 84px; transform: translateX(-50%); z-index: 5; background: var(--ink); color: var(--paper); font: 700 14px/1.4 var(--text); padding: 10px 16px; border-radius: 10px; box-shadow: 3px 3px 0 var(--amber); animation: v8-slide .25s ease; }
+
+/* Project switcher: the project name in the top bar opens a sticker panel under it. */
+.v8-proj { position: relative; }
+.v8-proj-btn { background: transparent; border: 0; padding: 8px 10px; border-radius: 10px; color: var(--ink); display: flex; align-items: center; gap: 0; }
+.v8-proj-btn i { font-style: normal; font-size: 11px; color: var(--ink3); margin-left: 8px; }
+.v8-proj-btn:hover, .v8-proj-btn[aria-expanded=true] { background: var(--paper); box-shadow: inset 0 0 0 1.5px var(--hair); }
+.v8-proj-menu { position: absolute; left: 0; top: calc(100% + 8px); z-index: 20; width: 420px; padding: 14px; }
+.v8-proj-menu ul { list-style: none; margin: 10px 0; display: grid; gap: 6px; max-height: 360px; overflow: auto; }
+.v8-proj-menu li button { width: 100%; text-align: left; display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 10px 12px; border-radius: 10px; border: 1.5px solid var(--hair); background: var(--page); color: var(--ink); }
+.v8-proj-menu li button:hover:not(:disabled) { border-color: var(--edge); }
+.v8-proj-menu li button:disabled { cursor: default; }
+.v8-proj-menu li button[aria-current=true] { border-color: var(--edge); background: var(--paper); box-shadow: 3px 3px 0 var(--shadow); }
+.v8-proj-menu li b { font: 800 15px/1.3 var(--text); }
+.v8-proj-menu li small { grid-column: 1; font: 500 11.5px/1.3 var(--mono); color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v8-proj-menu li em { grid-column: 2; grid-row: 1 / span 2; align-self: center; font: 800 11px/1 var(--text); font-style: normal; background: var(--amber); color: #15120f; padding: 5px 8px; border-radius: 999px; }
+.v8-proj-open { width: 100%; font: 800 14px/1 var(--text); padding: 12px; border-radius: 10px; border: 2px dashed var(--ink3); background: transparent; color: var(--ink2); }
+.v8-proj-open:hover { border-color: var(--edge); color: var(--ink); }
+.v8-proj-problem { margin-top: 10px; font: 600 13px/1.5 var(--text); color: var(--brick); }
+.v8-proj-confirm p { font: 600 15px/1.6 var(--text); }
+.v8-proj-acts { display: flex; gap: 10px; margin-top: 12px; }
+.v8-proj-cancel { font: 800 13px/1 var(--text); padding: 9px 13px; border-radius: 9px; border: 2px solid var(--ink3); background: transparent; color: var(--ink); }
+
+/* Agent badges: which harness and which model provider a gremlin runs on. */
+.v8-mark { display: inline-grid; place-items: center; flex: none; border-radius: 50%; border: 1.5px solid var(--edge); box-shadow: 1.5px 1.5px 0 var(--shadow); vertical-align: middle; }
+.v8-mark b { font-family: var(--display); color: #fff; line-height: 1; }
+.v8-mark-harness { background: var(--ink); }
+.v8-mark-harness b { color: var(--amber); font-size: 16px; }
+.v8-agent { display: grid; gap: 10px; margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: var(--paper); border: 1.5px solid var(--hair); }
+.v8-agent-row { display: flex; align-items: center; gap: 12px; }
+.v8-agent-row > div { display: grid; gap: 4px; min-width: 0; }
+.v8-agent-row b { font: 800 14px/1.2 var(--text); }
+.v8-agent-model { font-family: var(--mono) !important; font-weight: 600 !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v8-cap-agent { display: inline-flex; align-items: center; gap: 6px; }
+button.v8-stat { text-align: left; color: var(--ink); font: inherit; transition: transform .12s ease; }
+button.v8-stat:hover { transform: translateY(-2px); border-color: var(--edge); }
+button.v8-stat.is-hot { color: #15120f; }

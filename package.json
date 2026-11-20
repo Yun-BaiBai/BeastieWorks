@@ -1,0 +1,52 @@
+{
+  "name": "beastie-works",
+  "productName": "Beastie Works",
+  "version": "0.8.0",
+  "private": true,
+  "description": "小怪工坊：把本机的 AI agent 叫到一起，替你和朋友干活。",
+  "main": "out/main/index.js",
+  "author": "Beastie Works",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Yun-BaiBai/BeastieWorks.git"
+  },
+  "homepage": "https://github.com/Yun-BaiBai/BeastieWorks",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build && npm run copy:main-assets",
+    "copy:main-assets": "node tools/copy-main-assets.cjs",
+    "preview": "electron-vite preview",
+    "postinstall": "electron-rebuild -f",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "dist:win": "npm run build && node tools/prepare-magpie.cjs && node tools/prepare-git.cjs && electron-builder --win"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^2.7.0",
+    "better-sqlite3": "^11.10.0",
+    "npm": "11.13.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@agentclientprotocol/claude-agent-acp": "^0.107.0",
+    "@electron/rebuild": "^3.7.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.7.5",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "electron": "^32.2.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.8"
+  },
+  "overrides": {
+    "app-builder-lib": {
+      "@electron/rebuild": "$@electron/rebuild"
+    }
+  }
+}

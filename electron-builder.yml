@@ -1,0 +1,63 @@
+appId: works.beastie.app
+productName: Beastie Works
+copyright: Copyright © 2026 Beastie Works
+
+# 小怪工坊 is our own app (老板 2026-11-20). Nothing here points at Munder Difflin, the MIT-licensed project it
+# started from: no update feed (no `publish`, so no app-update.yml and no updater), no URL scheme, no release notes
+# from its repository. Its copyright notice ships in THIRD_PARTY_NOTICES.txt, as its license requires.
+#
+# Claude Code is not shipped (老板 2026-11-20): Anthropic asks products that preinstall it to agree to its Commercial
+# Terms. A friend who wants Claude installs it from the official list in the agent roster, like any other agent.
+# Its adapter is a devDependency, so it is used while developing and never packaged.
+
+directories:
+  output: dist
+  buildResources: build
+
+# Package the built app only (out/ also holds agents installed while developing).
+files:
+  - out/main/**
+  - out/preload/**
+  - out/renderer/**
+  - package.json
+  - THIRD_PARTY_NOTICES.txt
+  - "!**/*.{map,ts,tsx}"
+
+extraResources:
+  # The license and the notices also sit in the install folder, where a person can open them.
+  - from: LICENSE
+    to: LICENSE.txt
+  - from: THIRD_PARTY_NOTICES.txt
+    to: THIRD_PARTY_NOTICES.txt
+  # The Magpie that ships with the app (requirement 8), put in build/magpie by tools/prepare-magpie.cjs.
+  - from: build/magpie
+    to: magpie
+  # Git (MinGit, put in build/git by tools/prepare-git.cjs), used when the computer has none (src/main/index.ts).
+  - from: build/git
+    to: git
+
+# Files other programs run must be real files on disk (src/main/v8/hostToolBridge.ts outsideAsar): the relay an agent
+# starts, the npm that installs agents, and better-sqlite3's native module.
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+  - "**/node_modules/npm/**"
+  - "out/main/host-tool-relay.cjs"
+
+# Use the Electron already in node_modules instead of downloading it again, and keep the native module as it was
+# built for that Electron (rebuilding would download Electron's headers).
+electronDist: node_modules/electron/dist
+npmRebuild: false
+
+# ---- Windows (the friends' computers) ----
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: Beastie-Works-${version}-win-x64-setup.exe
+  shortcutName: Beastie Works

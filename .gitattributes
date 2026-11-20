@@ -1,0 +1,15 @@
+# The SHA-256 pin covers the complete asset bytes, including its final newline.
+# Keep checkout from changing those bytes on Windows with core.autocrlf=true.
+/src/main/role-pool.json -text
+/src/main/lead-guide.json -text
+/src/main/collaboration-guide.json -text
+/src/main/team-schema-validator.cjs -text
+/src/main/seed-catalog.json -text
+/src/main/seat-skill-cli.cjs -text
+
+/src/main/agency-convert/** -text
+
+# Preserve the locked upstream Pixel Agents bytes and attribution.
+/vendor/pixel-agents/** -text
+
+/src/main/lead-kickoff/** -text
