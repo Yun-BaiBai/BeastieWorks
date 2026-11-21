@@ -59,9 +59,16 @@ jobs:
         run: |
           $env:ELECTRON_RUN_AS_NODE = '1'
           $env:AGENTCORP_TEST_MAGPIE_EXE = $env:BEASTIE_MAGPIE_EXE
-          $tests = Get-ChildItem test -Recurse -Filter *.test.cjs | ForEach-Object { $_.FullName }
-          & node_modules/electron/dist/electron.exe --test $tests
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tests = Get-ChildItem test -Recurse -Filter *.test.cjs | ForEach-Object { $_.FullName.Substring($PWD.Path.Length + 1).Replace('\', '/') }
+          # electron.exe is a windowed program: PowerShell does not wait for it with `&`, so the first run ended the step
+          # after 11 tests and still passed. Wait for it, as the local test script does, and require the summary line.
+          $p = Start-Process -FilePath node_modules/electron/dist/electron.exe -ArgumentList (@('--test') + $tests) -NoNewWindow -PassThru -RedirectStandardOutput test-out.log -RedirectStandardError test-err.log
+          $null = $p.Handle
+          $p.WaitForExit()
+          Get-Content test-err.log -Tail 20
+          Select-String -Path test-out.log -Pattern '^not ok|^# (tests|pass|fail|skipped) ' | ForEach-Object Line
+          if ($p.ExitCode -ne 0) { exit $p.ExitCode }
+          if (-not (Select-String -Path test-out.log -Pattern '^# fail 0$' -Quiet)) { Write-Error 'the test summary is missing'; exit 1 }
 
       - name: Build the installer
         run: npm run dist:win -- --publish never
