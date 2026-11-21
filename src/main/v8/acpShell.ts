@@ -180,6 +180,8 @@ export class AcpSession implements ShellSession {
   private calls = new Map<string, Json>();
   /** Dollars the agent reported for this session so far (ACP usage_update.cost is a running total). */
   private reportedUsd = 0;
+  /** While an old session loads: the agent replays it, and none of that is news. */
+  private replaying = false;
   private reportedThisTurn = false;
   /** The model this session was opened on (a Magpie id is priced by its model part). */
   private readonly asked: string | null;
@@ -206,16 +208,26 @@ export class AcpSession implements ShellSession {
       this.seat = await openToolSeat(spec.hostTools, (name, args) => this.hostCall(name, args), this.o.node);
       mcpServers.push(this.seat.server);
     }
-    if (spec.sessionRef && shake.canLoadSession) {
-      const loaded = await conn.agent.request('session/load', { sessionId: spec.sessionRef, cwd: spec.cwd, mcpServers, ...this.meta(spec) });
-      this.ref = spec.sessionRef;
-      this.first = null;   // a loaded session already carries its instructions
-      this.text = '';      // loading replays the old conversation; none of it is new
-      // A loaded session starts on the agent's own defaults again: Codex resumed a rework on its default model
-      // (gpt-6.1-sol, medium) on 2026-11-19 because only new sessions were set up. Set it up the same way.
-      this.state = loaded && typeof loaded === 'object' ? loaded : {};
-      await this.setUp(spec);
-      return;
+    // Carry on the old conversation the way OpenMausBot does (server/drivers/acp/core.ts): session/load, or
+    // session/resume for an agent that only offers that (Antigravity); if the agent no longer has it, a new session,
+    // and the caller sees from `ref` that it is new. What the agent replays while loading is old, so it is dropped.
+    if (spec.sessionRef && (shake.canLoadSession || shake.canResume)) {
+      let loaded: Json | null = null;
+      this.replaying = true;
+      try {
+        const got = await conn.agent.request(shake.canLoadSession ? 'session/load' : 'session/resume', { sessionId: spec.sessionRef, cwd: spec.cwd, mcpServers, ...this.meta(spec) });
+        loaded = got && typeof got === 'object' ? got : {};
+      } catch { /* gone, or this agent cannot carry it on: a new session below */ }
+      finally { this.replaying = false; this.text = ''; }
+      if (loaded) {
+        this.ref = spec.sessionRef;
+        this.first = null;   // a loaded session already carries its instructions
+        // A loaded session starts on the agent's own defaults again: Codex resumed a rework on its default model
+        // (gpt-6.1-sol, medium) on 2026-11-19 because only new sessions were set up. Set it up the same way.
+        this.state = loaded;
+        await this.setUp(spec);
+        return;
+      }
     }
     const made = await conn.agent.request('session/new', { cwd: spec.cwd, mcpServers, ...this.meta(spec) });
     this.ref = typeof made.sessionId === 'string' ? made.sessionId : '';
@@ -329,6 +341,12 @@ export class AcpSession implements ShellSession {
   private update(p: Json): void {
     if (p.sessionId !== this.ref && this.ref) return;
     const u = (p.update ?? {}) as Json;
+    if (this.replaying) {
+      // The old conversation coming back: nothing in it is new. Its running cost is where counting starts from.
+      const cost = u.sessionUpdate === 'usage_update' ? u.cost as { amount?: unknown; currency?: unknown } | null | undefined : null;
+      if (cost && cost.currency === 'USD' && typeof cost.amount === 'number' && Number.isFinite(cost.amount)) this.reportedUsd = cost.amount;
+      return;
+    }
     switch (u.sessionUpdate) {
       case 'usage_update': {
         const cost = u.cost as { amount?: unknown; currency?: unknown } | null | undefined;

@@ -2,7 +2,9 @@
 // was removed with the old harness (老板 2026-11-20). Deliberately not a YAML parser: a description is often a
 // multi-line `|` block, which a naive key:value split would cut at the first line.
 export function parseSkillFrontmatter(md: string): { name?: string; description?: string } {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(md);
+  // A file saved with a byte order mark (agent-desktop's SKILL.md is) starts with an invisible U+FEFF before the ---;
+  // without dropping it the whole header was missed and the skill had no name or description (2026-11-21).
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(md.replace(/^﻿/, ''));
   if (!m) return {};
   const body = m[1];
   const out: { name?: string; description?: string } = {};

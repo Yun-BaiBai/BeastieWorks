@@ -93,7 +93,6 @@ On small jobs Beastie Works is slower and costs more. The extra buys a review by
 - Most agents on the list have not yet been given real work one by one; signing in to Cursor, Kimi and Grok from the app has not been tried with real accounts.
 - Quota: Claude and Codex are read directly, others through Magpie, and some cannot be read. For agents that don't report dollars, cost is estimated from official prices; subscribers are not actually charged that way.
 - Switching to another maker's model through Magpie uses the subscription accounts signed in on your computer. Some services' terms may not allow this; judge for yourself and use only accounts in your own name.
-- After the app is closed and reopened, the Lead Gremlin does not remember the earlier conversation (tickets and notes are kept).
 - The instructions given to agents are written in Chinese; with the English interface, the gremlins talk to you in English.
 
 ## Privacy

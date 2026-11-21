@@ -104,3 +104,13 @@
 .v8n-edit { width: 100%; padding: 7px 10px; border-radius: 8px; border: 2px solid var(--edge); background: var(--paper); color: var(--ink); font: 600 14px var(--text); }
 .v8-cap .v8n-open { margin-left: 12px; letter-spacing: 0; text-transform: none; }
 .v8s-bar .v8n-capture input { flex: none; width: 18px; height: 18px; padding: 0; }
+
+/* Settings rows of choices (外观, 界面语言, 技能文件夹): one line beside the title. The text-box width above must not
+   reach the radio buttons, which pushed their words into a one-character column (boss's screenshot 2026-11-21). */
+.v8u-line input[type=radio], .v8u-line input[type=checkbox] { width: auto; padding: 0; margin: 0; }
+.v8u-role > .v8u-line { flex-direction: row; align-items: center; align-self: center; grid-column: 2 / -1; gap: 10px 28px; }
+.v8u-role > .v8u-line .v8a-radio { align-items: center; white-space: nowrap; }
+.v8u-cap { display: flex; flex-direction: column; gap: 5px; align-self: end; }
+.v8u-cap input { padding: 8px 12px; border-radius: 10px; border: 2px solid var(--edge); background: var(--paper); color: var(--ink); font: 600 14px var(--text); width: 100%; box-sizing: border-box; }
+.v8u-cap small { font: 500 11.5px/1.4 var(--text); color: var(--ink2); min-height: 16px; }
+.v8u-role > .v8a-radio { align-self: center; }

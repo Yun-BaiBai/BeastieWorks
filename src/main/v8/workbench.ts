@@ -138,6 +138,8 @@ export class V8Workbench {
     // What each ticket has spent and how far the boss let it go, kept across restarts and project switches, so the
     // per-ticket cap means the same after a restart (C3 review, finding 12).
     this.db.exec('CREATE TABLE IF NOT EXISTS v8_ticket_spend(ticket_id INTEGER PRIMARY KEY, cost REAL NOT NULL DEFAULT 0, allowance REAL)');
+    // The lead's session, kept so a restart carries on the same conversation (C3 review, finding 8, the lead's half).
+    this.db.exec('CREATE TABLE IF NOT EXISTS v8_lead_session(id INTEGER PRIMARY KEY CHECK (id = 1), agent TEXT NOT NULL, ref TEXT NOT NULL)');
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.scheduler = new Scheduler(this.db, { clock: this.now, review: o.settings.review !== false });
@@ -169,7 +171,13 @@ export class V8Workbench {
     });
     this.thinker = acp ? thinker : null;
     this.patrolLimits = { ...PATROL_DEFAULTS, ...(o.patrol ?? {}) };
+    // Only a session of the same agent is carried on; another agent starts new and catches up from the talk.
+    const leadAgent = acp ? acp.lead.agent : 'demo';
+    const kept = this.db.prepare('SELECT agent, ref FROM v8_lead_session WHERE id = 1').get() as { agent: string; ref: string } | undefined;
     this.lead = new Lead(this.scheduler, this.dispatcher, thinker, { cwd: leadCwd, name: this.leadName(), model: acp ? acp.lead.model ?? null : model,
+      sessionRef: kept && kept.agent === leadAgent ? kept.ref : null,
+      history: () => this.scheduler.messages(null, 30).map(m => ({ author: m.author === 'boss' ? 'boss' as const : 'lead' as const, text: String(m.body) })),
+      onSession: ref => { this.db.prepare('INSERT INTO v8_lead_session(id, agent, ref) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET agent = excluded.agent, ref = excluded.ref').run(leadAgent, ref); },
       ...(acp ? { roundtable: { open: (m: number, t?: string) => this.roundtable!.open(m, t), plans: (a: unknown) => this.roundtable!.plans(a) } } : {}), chains: { open: (a: unknown) => this.chains.open(a) }, ...(acp ? { splits: { open: (m: number, t?: string) => this.splits!.open(m, t) } } : {}), onCost: (usd, basis) => { this.spentBases.add(basis); this.spent += usd; this.spentBy.lead += usd; this.changed(); } });
     this.reviewer = s.review === false ? null : new Reviewer(this.scheduler, this.dispatcher, reviewShell, {
       model: acp ? (acp.reviewer ?? acp.lead).model ?? null : model, cwd: id => this.spaces.path(id), diff: id => this.rawDiff(id), onCost: (usd, basis) => { this.spentBases.add(basis); this.spent += usd; this.spentBy.review += usd; this.changed(); },

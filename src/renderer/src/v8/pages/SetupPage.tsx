@@ -144,9 +144,10 @@ export function SetupPage({ hero, first, onDone }: { hero: Hero; first: boolean;
             </select></label>
           <label className="v8a-radio"><input type="checkbox" checked={emergency} onChange={e => setEmergency(e.target.checked)} />
             <span>{tr('另留一个应急名额：你刚说的话不用排队')}</span></label>
-          <label className="v8u-line"><span className="v8-cap">{tr('每件活最多花多少美元')}</span>
-            <input value={cap} onChange={e => setCap(e.target.value)} placeholder={tr('不限')} inputMode="decimal" aria-label={tr('每件活的花费上限（美元）')} /></label>
-          <small className="v8m-sub">{capOk ? (capUsd ? tr('花到 {0} 小怪会停下等你决定；点"再试一次"让它再花这么多。', [capUsd]) : tr('不设上限。')) : tr('填一个 0 到 1000 之间的数，或者留空表示不限。')}</small>
+          {/* The cap, its box and what it means stay together in one column (boss's screenshot 2026-11-21). */}
+          <label className="v8u-cap"><span className="v8-cap">{tr('每件活最多花多少美元')}</span>
+            <input value={cap} onChange={e => setCap(e.target.value)} placeholder={tr('不限')} inputMode="decimal" aria-label={tr('每件活的花费上限（美元）')} />
+            <small className="v8m-sub">{capOk ? (capUsd ? tr('花到 {0} 小怪会停下等你决定；点"再试一次"让它再花这么多。', [capUsd]) : tr('不设上限。')) : tr('填一个 0 到 1000 之间的数，或者留空表示不限。')}</small></label>
         </div>
         <div className="v8u-role"><div><b>{tr('技能从哪里读')}</b><small>{skillRoots ? tr('你选的文件夹') : tr('默认：agent 们共用的 ~/.agents/skills 和 ~/.claude/skills')}</small></div>
           {(skillRoots ?? []).map(r => <div key={r} className="v8u-line"><code>{r}</code>

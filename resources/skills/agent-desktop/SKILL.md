@@ -1,4 +1,4 @@
-﻿---
+---
 name: agent-desktop
 tags: computer-use, desktop-automation, accessibility, ai-agent, gui-automation, cli
 requirements:

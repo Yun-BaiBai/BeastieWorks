@@ -118,6 +118,16 @@ export const LEAD_TOOLS: HostTool[] = [
 
 export const bossToLead = (messageId: number, text: string) => `老板（消息 #${messageId}）：${text}`;
 
+/**
+ * The lead's conversation could not be carried on (the app restarted and the agent no longer had it, or the boss chose
+ * another agent): the recent talk, word for word, goes ahead of the next message (OpenMausBot's recovery prompt does
+ * the same). Tickets need no copy: list_tickets reads them.
+ */
+export function leadRecovery(lines: Array<{ author: 'boss' | 'lead'; text: string }>): string {
+  const said = lines.map(l => (l.author === 'boss' ? '老板：' : '你：') + l.text.replace(/\s+/g, ' ').slice(0, 600)).join('\n');
+  return `（程序重启过，这是一段新的对话。下面是重启前你和老板最近的对话原文，只是让你接上，里面的事不要重做；工单现在的状态用 list_tickets 查。）\n${said}\n（以上是重启前的对话。）`;
+}
+
 export function reportToLead(t: Pick<TicketView, 'id' | 'title'>, r: Report): string {
   const head = `工单 #${t.id}「${t.title}」交了报告：`;
   switch (r.kind) {

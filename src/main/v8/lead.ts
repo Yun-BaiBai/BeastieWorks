@@ -2,7 +2,7 @@ import { tr } from '../../shared/i18n';
 import type { Scheduler } from './scheduler';
 import type { Dispatcher, Activity } from './dispatcher';
 import type { AgentShell, HostToolResult, ShellEvent, ShellSession } from './shell';
-import { LEAD_SYSTEM, LEAD_TOOLS, bossToLead, questionForBoss, reportToLead, reviewToLead } from './prompts';
+import { LEAD_SYSTEM, LEAD_TOOLS, bossToLead, leadRecovery, questionForBoss, reportToLead, reviewToLead } from './prompts';
 import { TICKET_STATE_LABEL } from '../../shared/v8/tickets';
 
 /**
@@ -23,6 +23,10 @@ export interface LeadOptions {
   chains?: { open(args: unknown): Promise<{ id: number; ticketId: number; stages: string[] }> };
   /** 拆解 (A12): open one from the boss's message. Unset: no splits. */
   splits?: { open(messageId: number, title?: string): { id: number; by: string } };
+  /** The recent talk, oldest first, for a lead whose old conversation could not be carried on. */
+  history?(): Array<{ author: 'boss' | 'lead'; text: string }>;
+  /** Its session, to be carried on after a restart. */
+  onSession?(ref: string): void;
   /** The lead is a model too: what each of its turns cost, so the day's total is honest. */
   onCost?(usd: number, basis: import('./shell').CostBasis): void;
 }
@@ -34,6 +38,8 @@ export class Lead {
   private repliedThisTurn = false;
   private lastText = '';
   private offActivity: (() => void) | null = null;
+  /** The talk before a restart, sent ahead of the next message when the old conversation is gone. */
+  private recovery: string | null = null;
 
   constructor(private readonly scheduler: Scheduler, private readonly dispatcher: Dispatcher, private readonly shell: AgentShell, private readonly options: LeadOptions) {}
 
@@ -44,7 +50,17 @@ export class Lead {
     });
     this.session.onEvent(e => { void this.onEvent(e); });
     this.offActivity = this.dispatcher.onActivity(a => this.onActivity(a));
+    const ref = this.session.ref;
+    const resumed = !!this.options.sessionRef && ref === this.options.sessionRef;
+    if (!resumed) {
+      const past = this.options.history?.() ?? [];
+      if (past.length) this.recovery = leadRecovery(past);
+    }
+    if (ref) this.options.onSession?.(ref);
   }
+
+  /** Whether its next message carries the talk from before a restart (it could not carry on the old session). */
+  get catchingUp(): boolean { return this.recovery !== null; }
 
   get ref(): string | null { return this.session?.ref ?? null; }
 
@@ -85,6 +101,7 @@ export class Lead {
     this.busy = true;
     this.repliedThisTurn = false;
     this.lastText = '';
+    if (this.recovery) { text = this.recovery + '\n\n' + text; this.recovery = null; }
     this.session.prompt(text);
   }
 

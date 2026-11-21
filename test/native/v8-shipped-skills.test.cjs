@@ -9,6 +9,7 @@ const { execFileSync } = require('node:child_process');
 const load = require('../load-ts.cjs');
 const { SkillLibrary } = load('src/main/v8/skillLibrary.ts');
 const { SkillTools, SHIPPED_TOOLS } = load('src/main/v8/skillTools.ts');
+const { parseSkillFrontmatter } = load('src/main/v8/skillFrontmatter.ts');
 
 const SHIPPED = path.join(__dirname, '..', '..', 'resources', 'skills');
 
@@ -26,7 +27,13 @@ test('the four shipped skills are in resources/skills, each with its license', (
   for (const id of ['find-skills', 'agent-browser', 'agent-desktop', 'agent-reach']) {
     assert.ok(fs.existsSync(path.join(SHIPPED, id, 'SKILL.md')), id + ' SKILL.md');
     assert.match(fs.readFileSync(path.join(SHIPPED, id, 'LICENSE.txt'), 'utf8'), /MIT License|Apache License/, id + ' license');
+    // Each one's name and description are read.
+    const head = parseSkillFrontmatter(fs.readFileSync(path.join(SHIPPED, id, 'SKILL.md'), 'utf8'));
+    assert.equal(head.name, id, id + ' name');
+    assert.ok((head.description ?? '').length > 20, id + ' description');
   }
+  // A SKILL.md saved with an invisible byte order mark (agent-desktop's was, 2026-11-21) is read all the same.
+  assert.equal(parseSkillFrontmatter(String.fromCharCode(0xFEFF) + '---\nname: x\ndescription: y\n---\n').name, 'x');
   assert.deepEqual(SHIPPED_TOOLS.map(x => x.skill).sort(), ['agent-browser', 'agent-desktop', 'agent-reach', 'find-skills']);
 });
 

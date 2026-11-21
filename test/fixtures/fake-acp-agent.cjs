@@ -24,7 +24,12 @@ readline.createInterface({ input: process.stdin }).on('line', async line => {
   if (m.id !== undefined && m.method === undefined) { waiting.get(m.id)?.(m.result ?? m.error); waiting.delete(m.id); return; }
   if (m.method === 'initialize') return send({ id: m.id, result: { protocolVersion: 1, agentInfo: { name: 'fake', title: 'Fake Agent', version: '1' }, agentCapabilities: { loadSession: true }, authMethods: [] } });
   // A resumed session starts on the agent's defaults again, as Codex's does.
-  if (m.method === 'session/load') { chosen.model = 'a/fast'; chosen.effort = 'low'; return send({ id: m.id, result: { configOptions: options() } }); }
+  // FAKE_ACP_LOAD=gone: the old session is not there any more. Otherwise it is, and loading replays it first.
+  if (m.method === 'session/load') {
+    if (process.env.FAKE_ACP_LOAD === 'gone') return send({ id: m.id, error: { code: -32002, message: 'Resource not found: session ' + m.params.sessionId } });
+    say(m.params.sessionId, 'an old answer, replayed');
+    chosen.model = 'a/fast'; chosen.effort = 'low'; return send({ id: m.id, result: { configOptions: options() } });
+  }
   if (m.method === 'session/new') {
     if (process.env.FAKE_ACP_SIGNED_OUT) return send({ id: m.id, error: { code: -32000, message: 'Authentication required' } });
     return send({ id: m.id, result: { sessionId: 's1', ...(process.env.FAKE_ACP_NO_OPTIONS ? {} : { configOptions: options() }) } });
