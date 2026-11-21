@@ -142,8 +142,9 @@ test('the boss moves a queued ticket to the front, from the queue page or by ask
 });
 
 test('slots follow the settings; the board shows the live slot and the project', async t => {
-  const { b } = await bench(t, home(t), { slots: 2, emergencySlot: false, model: 'openai/gpt-5.4-mini' });
-  assert.deepEqual(b.scheduler.slots().map(s => [s.id, s.model]), [['slot-1', 'openai/gpt-5.4-mini'], ['slot-2', 'openai/gpt-5.4-mini']]);
+  const { b } = await bench(t, home(t), { slots: 2, emergencySlot: false });
+  // The demo gremlins call no model (the per-slot model comes from the worker's agent with shell 'acp').
+  assert.deepEqual(b.scheduler.slots().map(s => [s.id, s.model]), [['slot-1', null], ['slot-2', null]]);
   b.say('改一');
   b.say('改二慢');
   await until(() => b.board().slots.filter(s => s.ticket).length === 2 || state(b, '改一') === 'REVIEW', 'two at work');

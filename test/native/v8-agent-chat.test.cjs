@@ -302,3 +302,11 @@ test('a resumed session gets the chosen model again (the rework of 2026-11-19 ra
   assert.equal(again.choices().model.current, 'b/fast');
   assert.equal(again.choices().effort.current, 'high');
 });
+
+test('what a roster chat costs is handed on, so it reaches the ledger (C1: S5.3)', async t => {
+  const s = scope(t), spent = [];
+  const chats = s.chats({ scratchRoot: s.tmp(), launch: async () => fake({ FAKE_ACP_COST: 'reported' }), onCost: (usd, basis) => spent.push([usd, basis]) });
+  assert.equal((await chats.say('fake', 'ping')).error, null);
+  await chats.say('fake', 'again');
+  assert.deepEqual(spent, [[0.25, 'reported'], [0.25, 'reported']], 'the running total becomes one charge per turn');
+});

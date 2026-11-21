@@ -50,6 +50,8 @@ export interface SignInFlow {
   /** A one-time code the person types on that page (Codex's device sign-in). */
   code?: string | null;
   message: string | null;
+  /** false: nothing is pasted back here (the code is typed on the maker's page, or there is none). */
+  paste?: boolean;
 }
 
 /** A model of any maker the Magpie that ships with the app can serve (requirement 8). `id` is Magpie's (provider/model). */

@@ -1,0 +1,67 @@
+# Adapted from Orca's bug report form (stablyai/orca, MIT).
+name: Bug 报告 / Bug report
+description: 小怪工坊哪里不对 / Something in Beastie Works is wrong
+title: '[Bug]: '
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        写清楚别人照着做就能看到同样的问题。中文、英文都行。安全问题请不要写在这里，见 SECURITY.md。
+        Write enough for someone else to see the same problem. Chinese or English is fine. Security problems don't go here; see SECURITY.md.
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本 / Version
+      description: 安装包文件名里的版本号 / From the installer's file name
+      placeholder: 0.9.0
+    validations:
+      required: false
+
+  - type: dropdown
+    id: agents
+    attributes:
+      label: 用到的 agent / Agents involved
+      multiple: true
+      options:
+        - Codex
+        - Claude
+        - Gemini
+        - Antigravity
+        - DeepSeek Harness
+        - Kimi
+        - Cursor
+        - Grok
+        - GitHub Copilot
+        - 别的 / Other
+        - 跟 agent 无关 / Not agent-related
+    validations:
+      required: false
+
+  - type: textarea
+    id: details
+    attributes:
+      label: 发生了什么 / What happened
+      description: 一句话说清楚，再写重现的步骤，最后写你本来以为会怎样 / A short summary, the steps, and what you expected
+      placeholder: |
+        一句话：
+        Short summary:
+
+        步骤 / Steps:
+        1.
+        2.
+        3.
+
+        本来以为 / Expected:
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 截图或别的线索 / Screenshots or anything else
+      description: 截图前遮住账号、密钥这类信息 / Hide accounts and keys before attaching
+    validations:
+      required: false

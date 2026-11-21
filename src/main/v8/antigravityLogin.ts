@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -52,7 +53,7 @@ export class AntigravityLogin {
   async start(): Promise<SignInFlow> {
     if (this.flow?.status.phase === 'waiting') return { ...this.flow.status };
     const launch = this.o.launch();
-    if (!launch) throw new Error('这台电脑上还没装 Antigravity 的接入程序。');
+    if (!launch) throw new Error(tr('这台电脑上还没装 Antigravity 的接入程序。'));
     const env = { ...this.o.env(), ...(launch.env ?? {}), AGY_ACP_FORCE_FILE_STORAGE: '1', PYTHONUNBUFFERED: '1' };
     if (antigravitySignedIn(env)) return { phase: 'succeeded', flowId: randomUUID(), url: null, message: null };
     // The sign-in kind goes in the server's own settings (an existing setting other than this one is kept as it is).
@@ -66,11 +67,11 @@ export class AntigravityLogin {
     this.flow = flow;
     return new Promise<SignInFlow>(resolve => {
       const ready = () => resolve({ ...flow.status });
-      flow.timers.push(setTimeout(() => { this.finish(flow, 'failed', 'Antigravity 没有及时给出登录网址。确认能连上 Google，再试一次。'); ready(); }, this.o.linkTimeoutMs ?? 60_000));
-      flow.timers.push(setTimeout(() => this.finish(flow, 'expired', '登录超时了，重新点"去登录"。'), this.o.lifetimeMs ?? 15 * 60_000));
+      flow.timers.push(setTimeout(() => { this.finish(flow, 'failed', tr('Antigravity 没有及时给出登录网址。确认能连上 Google，再试一次。')); ready(); }, this.o.linkTimeoutMs ?? 60_000));
+      flow.timers.push(setTimeout(() => this.finish(flow, 'expired', tr('登录超时了，重新点"去登录"。')), this.o.lifetimeMs ?? 15 * 60_000));
       let child: ChildProcessWithoutNullStreams;
       try { child = spawn(launch.command, launch.args, { env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }); }
-      catch { this.finish(flow, 'failed', 'Antigravity 启动不了。'); ready(); return; }
+      catch { this.finish(flow, 'failed', tr('Antigravity 启动不了。')); ready(); return; }
       flow.child = child;
       const send = (m: Record<string, unknown>) => { try { child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...m }) + '\n'); } catch { /* closed */ } };
       const line = (text: string) => {
@@ -80,10 +81,10 @@ export class AntigravityLogin {
         let m: { id?: unknown; result?: unknown; error?: { message?: unknown } };
         try { m = JSON.parse(text) as typeof m; } catch { return; }
         if (m.id === 1) {
-          if (m.error) { this.finish(flow, 'failed', 'Antigravity 没回应握手。'); ready(); return; }
+          if (m.error) { this.finish(flow, 'failed', tr('Antigravity 没回应握手。')); ready(); return; }
           send({ id: 2, method: 'authenticate', params: { methodId: 'oauth-personal' } });
         } else if (m.id === 2) {
-          if (m.error) { this.finish(flow, 'failed', '没登录上：' + String(m.error.message ?? '原因没说').slice(0, 200)); ready(); return; }
+          if (m.error) { this.finish(flow, 'failed', tr('没登录上：') + String(m.error.message ?? tr('原因没说')).slice(0, 200)); ready(); return; }
           this.finish(flow, 'succeeded');
           this.o.onSignedIn?.();
           ready();
@@ -99,15 +100,15 @@ export class AntigravityLogin {
         });
       };
       reader(child.stdout); reader(child.stderr);
-      child.once('error', () => { this.finish(flow, 'failed', 'Antigravity 启动不了。'); ready(); });
-      child.once('close', () => { if (flow.child === child) flow.child = null; this.finish(flow, 'failed', 'Antigravity 在登录完成前停了。'); ready(); });
+      child.once('error', () => { this.finish(flow, 'failed', tr('Antigravity 启动不了。')); ready(); });
+      child.once('close', () => { if (flow.child === child) flow.child = null; this.finish(flow, 'failed', tr('Antigravity 在登录完成前停了。')); ready(); });
       send({ id: 1, method: 'initialize', params: { protocolVersion: 1, clientInfo: { name: 'beastie-works', version: '0' }, clientCapabilities: {} } });
     });
   }
 
-  complete(): SignInFlow { throw new Error('Antigravity 登录不用在这里贴代码：在打开的 Google 页面上登录就行。'); }
+  complete(): SignInFlow { throw new Error(tr('Antigravity 登录不用在这里贴代码：在打开的 Google 页面上登录就行。')); }
   current(flowId: string): SignInFlow | null { return this.flow?.status.flowId === flowId ? { ...this.flow.status } : null; }
-  cancel(): void { if (this.flow) this.finish(this.flow, 'cancelled', '已取消。'); }
+  cancel(): void { if (this.flow) this.finish(this.flow, 'cancelled', tr('已取消。')); }
 
   private finish(flow: Flow, phase: Exclude<SignInFlow['phase'], 'waiting'>, message?: string): void {
     if (flow.status.phase !== 'waiting') return;

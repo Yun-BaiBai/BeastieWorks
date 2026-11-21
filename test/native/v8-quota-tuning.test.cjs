@@ -211,5 +211,7 @@ test('changing the quota rule does not restart the workbench (work in progress g
   settings = { slots: 1, onQuota: { do: 'switch', model: 'x' } };
   assert.equal(await host.get(), first);
   settings = { slots: 2, onQuota: { do: 'switch', model: 'x' } };
+  assert.equal(await host.get(), first, 'the slots apply live too (A1)');
+  settings = { slots: 2, review: false, onQuota: { do: 'switch', model: 'x' } };
   assert.notEqual(await host.get(), first, 'other settings still switch workbenches');
 });

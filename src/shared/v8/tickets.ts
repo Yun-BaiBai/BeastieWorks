@@ -2,6 +2,7 @@
  * v8 tickets: shared types for the scheduler (main) and the dispatch board (renderer).
  * Spec: work/claude-v8-direction-20261113/v8-规范.md, sections 1–3.
  */
+import { tr } from '../../shared/i18n';
 
 /** One state per ticket at any moment; see ticketState() for the order the rules are tried in. */
 export type TicketState =
@@ -17,8 +18,8 @@ export type TicketState =
   | 'STOPPED'; // 已停: the boss stopped it
 
 export const TICKET_STATE_LABEL: Readonly<Record<TicketState, string>> = Object.freeze({
-  ANSWER: '等你回答', REVIEW: '等你看', BLOCKED: '卡住', FAILED: '失败', WAITING_QUOTA: '等额度', QUEUED: '排队',
-  IDLE: '空闲', WORKING: '进行中', DONE: '完成', STOPPED: '已停',
+  ANSWER: tr('等你回答'), REVIEW: tr('等你看'), BLOCKED: tr('卡住'), FAILED: tr('失败'), WAITING_QUOTA: tr('等额度'), QUEUED: tr('排队'),
+  IDLE: tr('空闲'), WORKING: tr('进行中'), DONE: tr('完成'), STOPPED: tr('已停'),
 });
 
 /** Every time a gremlin stops it hands in exactly one of these. */

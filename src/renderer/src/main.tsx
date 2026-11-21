@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { V8App } from './v8/V8App';
 import brandLogo from './projects/office/assets/furball-v1.png';
 import './design/global.css';
+import { tr } from '@shared/i18n';
 
 const favicon = document.createElement('link');
 favicon.rel = 'icon';
@@ -18,6 +19,10 @@ if (splashMark) {
   img.style.cssText = 'height:56px;width:auto;display:block';
   splashMark.replaceWith(img);
 }
+
+// A8: the splash line is written in index.html in Chinese; show it in the interface language.
+const splashHint = document.querySelector('#cth-splash .hint');
+if (splashHint) splashHint.textContent = tr('小怪们正在上班…');
 
 const root = document.getElementById('root');
 if (!root) throw new Error('No root element');

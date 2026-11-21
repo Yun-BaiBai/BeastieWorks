@@ -1,3 +1,4 @@
+import { anyLang, dateLocale, tr } from '../../shared/i18n';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
@@ -12,7 +13,6 @@ import { Dispatcher, type Activity } from './dispatcher';
 import { Lead } from './lead';
 import type { AgentShell } from './shell';
 import { FakeShell } from './fakeShell';
-import { OmpShell } from './ompShell';
 import { TicketWorkspaces } from './workspace';
 import { directoryPolicy } from './approval';
 import { demoScripts } from './demoScripts';
@@ -21,11 +21,16 @@ import { Reviewer } from './reviewer';
 import { soonestBack } from './quotaRead';
 import { SKILL_TOOLS, type SkillLibrary } from './skillLibrary';
 import type { AgentQuota } from '../../shared/v8/agents';
-import { V8Supply, supplySession, type SupplyStatus } from './supply';
-import { ModelShell } from './modelShell';
 import { AcpShell, type AcpShellOptions } from './acpShell';
 import { agentName } from './acpQuirks';
 import type { V8AcpRole } from '../../shared/v8/settings';
+import { Roundtable, type Proposer } from './roundtable';
+import { oneShot } from './oneShot';
+import { Chains } from './chains';
+import { Splits } from './splits';
+import { NOTES_NUDGE, NOTES_SYSTEM, NOTES_TOOL, ProjectNotes, acceptNotes, notesBrief } from './notes';
+import type { NotesView } from '../../shared/v8/notes';
+import { GLANCE_NUDGE, GLANCE_SYSTEM, GLANCE_TOOL, PATROL_DEFAULTS, acceptGlance, glanceBrief, overload, overloadWords, type PatrolLimits } from './patrol';
 
 /**
  * The v8 workbench, put together: scheduler, lead, dispatcher, shell, one worktree per ticket and the directory
@@ -51,10 +56,14 @@ export interface WorkbenchOptions {
   quotaRule?: () => V8QuotaRule | undefined;
   /** The app's skill library (第 6 步); gremlins get it only on agents that take the app's tools. */
   skills?: SkillLibrary;
-  /** Tests only: the supply gateway talks to this local fake upstream instead of real providers. */
-  supplyFixture?: string;
   /** The three-state probe's limits and pace (v8 计划书 S2.2); tests shorten them. */
   probe?: { silentMs?: number; hardMs?: number; intervalMs?: number };
+  /** The patrol's 压垮 and 跑偏 rules (A11); tests shorten them. */
+  patrol?: Partial<PatrolLimits>;
+  /** Tests: give up on a roundtable proposer after this long. */
+  proposeTimeoutMs?: number;
+  /** A10: whether accepted tickets are written into the project's notebook (read live; default on). */
+  notesOn?: () => boolean;
   /** How often to look at tickets waiting for quota (default 60 s, as v7), and how long to wait before trying again
    *  when nobody said when the quota is back (default 15 min). */
   quotaPollMs?: number;
@@ -67,14 +76,39 @@ interface TicketLive { log: WorkLogLine[]; files: Map<string, FileChange>; cost:
 
 const MAX_LOG = 40, MAX_FEED = 40;
 const startOfDay = (t: number) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+/** At most this many gremlins at once (plus the emergency slot). */
+export const MAX_SLOTS = 8;
+/** The per-ticket spending cap the app enforces: none for oh-my-pi (it stops itself) or when not set. */
+const capOf = (s: V8Settings): number | null => typeof s.maxCostUsd === 'number' && s.maxCostUsd > 0 ? s.maxCostUsd : null;
 
 export class V8Workbench {
   readonly scheduler: Scheduler;
   readonly dispatcher: Dispatcher;
   readonly lead: Lead;
   readonly reviewer: Reviewer | null;
-  /** The supply layer (Magpie), when the settings name one. */
-  readonly supply: V8Supply | null;
+  /** 圆桌会议 (A6): only with agents from the roster, and two makers at least. */
+  readonly roundtable: Roundtable | null;
+  /** The lead's agent, for the patrol's glance (A11). */
+  private readonly thinker: AgentShell | null;
+  /** One-off sessions running in the background (notes, the patrol's glance, roundtable proposers, splits): closing
+   *  cuts them off and waits for them, so nothing writes after the database is closed. */
+  private readonly quit = new AbortController();
+  private readonly background = new Set<Promise<unknown>>();
+  private inBackground(work: Promise<unknown>): void {
+    const p = work.catch(() => undefined).finally(() => this.background.delete(p));
+    this.background.add(p);
+  }
+  /** A15: 工序链. */
+  readonly chains: Chains;
+  /** A12: 拆解. Null without agents of this computer. */
+  readonly splits: Splits | null;
+  /** A10: this project's notebook. */
+  readonly notes: ProjectNotes;
+  private readonly patrolLimits: PatrolLimits;
+  private patrolTimer: ReturnType<typeof setInterval> | null = null;
+  /** Per ticket: when the patrol last glanced, and what it already warned about (once each). */
+  private patrolled = new Map<number, { glancedAt: number; warned: Set<string> }>();
+  private glancing = new Set<number>();
   private reviewing: number | null = null;
   readonly projectRoot: string;
   private readonly db: Database.Database;
@@ -85,7 +119,13 @@ export class V8Workbench {
   private feed: FeedLine[] = [];
   private ring: RingMark[] = [];
   private spent = 0;
-  private spentBy = { lead: 0, review: 0 };
+  /**
+   * The spending cap per ticket in dollars (settings.maxCostUsd), for agents that do not stop by themselves (oh-my-pi
+   * did, with --max-cost). A ticket that reaches it stops and waits for the boss; "再试一次" allows it the same again.
+   */
+  private capUsd: number | null = null;
+  private allowance = new Map<number, number>();
+  private spentBy = { lead: 0, review: 0, other: 0 };
   /** How each turn counted today's money was known (see CostSure). */
   private spentBases = new Set<CostBasis>();
   private listeners = new Set<() => void>();
@@ -95,63 +135,148 @@ export class V8Workbench {
     this.now = o.clock ?? Date.now;
     mkdirSync(o.stateDir, { recursive: true });
     this.db = new Database(join(o.stateDir, 'v8.db'));
+    // What each ticket has spent and how far the boss let it go, kept across restarts and project switches, so the
+    // per-ticket cap means the same after a restart (C3 review, finding 12).
+    this.db.exec('CREATE TABLE IF NOT EXISTS v8_ticket_spend(ticket_id INTEGER PRIMARY KEY, cost REAL NOT NULL DEFAULT 0, allowance REAL)');
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.scheduler = new Scheduler(this.db, { clock: this.now, review: o.settings.review !== false });
     const s = o.settings;
-    // 规范第 5 节: two slots by default, plus one emergency slot kept for work the boss just spoke to.
-    const count = Math.min(4, Math.max(1, Math.floor(s.slots ?? 2)));
-    // With agents from the roster each role names its own model; the slots show the gremlins'.
-    const model = (s.shell === 'acp' ? s.acp?.worker.model : s.model) ?? null;
-    const slots: SlotConfig[] = Array.from({ length: count }, (_, i) => ({ id: 'slot-' + (i + 1), label: '工位 ' + String(i + 1).padStart(2, '0'), model, emergency: false }));
-    if (s.emergencySlot !== false) slots.push({ id: 'slot-emergency', label: '应急', model, emergency: true });
-    // Apply new slot settings even when work was left running (after a crash every running assignment is still
-    // marked so until start() recovers it). Only removing a slot that holds running work is refused; then the old
-    // slots stay until that work is done and the settings apply on the next start.
-    if (JSON.stringify(this.scheduler.slots()) !== JSON.stringify(slots)) {
-      try { this.scheduler.setSlots(slots); } catch (err) { if (!(err instanceof Error && err.message === 'V8_SLOT_BUSY')) throw err; }
-    }
+    this.applySlots(s);
+    this.capUsd = capOf(s);
+    // With agents from the roster each role names its own model.
+    const model = (s.shell === 'acp' ? s.acp?.worker.model : null) ?? null;
 
-    // The supply layer comes first: the shell asks it for the gateway's address when a session opens.
-    this.supply = s.supply && (s.supply.magpieExe || s.supply.remote)
-      ? new V8Supply({ root: join(o.stateDir, 'gateway'), settings: s.supply, ...(o.supplyFixture ? { fixtureUpstream: o.supplyFixture } : {}) })
-      : null;
-    const mark = basename(o.stateDir);
     this.projectRoot = s.projectRoot ?? this.demoRepo();
     this.spaces = new TicketWorkspaces(this.projectRoot, join(o.stateDir, 'work'));
     const acp = !o.shell && s.shell === 'acp' ? s.acp ?? null : null;
     if (!o.shell && s.shell === 'acp' && !acp) throw new Error('V8_ACP_ROLES_MISSING');
     const shell = o.shell ?? (acp ? this.roleShell(acp.worker) : this.makeShell());
-    // The lead and the reviewer do no work: with a gateway they talk to the model directly (v8 计划书 S1.8).
-    const thinker = acp ? this.roleShell(acp.lead)
-      : this.supply && !o.shell && s.shell === 'omp' && (s.supply?.thinkersVia ?? 'model') === 'model'
-      ? new ModelShell({ origin: () => this.supply?.origin() ?? null, historyDir: join(o.stateDir, 'conversations') })
-      : shell;
+    // Each role on its own agent; without agents (the demo) the lead and the reviewer share the gremlins' shell.
+    const thinker = acp ? this.roleShell(acp.lead) : shell;
     const reviewShell = acp?.reviewer ? this.roleShell(acp.reviewer) : thinker;
     // An agent from the roster brings its own tools for reading; the lead's room is an empty folder, so there is
     // nothing to read, and every other tool is refused (spec section 4, boss's answer 6 of the final plan).
     const leadCwd = acp ? join(o.stateDir, 'lead-room') : this.projectRoot;
     if (acp) mkdirSync(leadCwd, { recursive: true });
-    const extra = s.omp?.extraPath ?? [];
+    this.notes = new ProjectNotes(join(o.stateDir, 'notes.json'), this.now);
     this.dispatcher = new Dispatcher(this.scheduler, shell, {
       workdir: id => this.spaces.ensure(id),
-      approve: directoryPolicy({ workdir: id => this.spaces.path(id), toolDirs: extra, hostTools: [REPORT_TOOL.name, ...(o.skills ? SKILL_TOOLS.map(t => t.name) : [])] }),
-      supplySession: (ticketId, assignmentId) => supplySession(mark, 'worker', ticketId, assignmentId),
+      approve: directoryPolicy({ workdir: id => this.spaces.path(id), protectedFiles: id => this.spaces.big(id).filter(b => b.linked).map(b => b.path), hostTools: [REPORT_TOOL.name, ...(o.skills ? SKILL_TOOLS.map(t => t.name) : [])] }),
       clock: this.now, ...(o.probe ? { probe: o.probe } : {}),
+      notes: { briefLines: () => this.notes.briefLines() },
       ...(o.skills ? { skills: { briefLines: (about: string) => o.skills!.briefLines(about), call: (n: string, a: unknown) => o.skills!.call(n, a), tools: SKILL_TOOLS } } : {}),
     });
-    this.lead = new Lead(this.scheduler, this.dispatcher, thinker, { cwd: leadCwd, name: this.leadName(), model: acp ? acp.lead.model ?? null : model, supplySession: supplySession(mark, 'lead'), onCost: (usd, basis) => { this.spentBases.add(basis); this.spent += usd; this.spentBy.lead += usd; this.changed(); } });
+    this.thinker = acp ? thinker : null;
+    this.patrolLimits = { ...PATROL_DEFAULTS, ...(o.patrol ?? {}) };
+    this.lead = new Lead(this.scheduler, this.dispatcher, thinker, { cwd: leadCwd, name: this.leadName(), model: acp ? acp.lead.model ?? null : model,
+      ...(acp ? { roundtable: { open: (m: number, t?: string) => this.roundtable!.open(m, t), plans: (a: unknown) => this.roundtable!.plans(a) } } : {}), chains: { open: (a: unknown) => this.chains.open(a) }, ...(acp ? { splits: { open: (m: number, t?: string) => this.splits!.open(m, t) } } : {}), onCost: (usd, basis) => { this.spentBases.add(basis); this.spent += usd; this.spentBy.lead += usd; this.changed(); } });
     this.reviewer = s.review === false ? null : new Reviewer(this.scheduler, this.dispatcher, reviewShell, {
-      model: acp ? (acp.reviewer ?? acp.lead).model ?? null : model, cwd: id => this.spaces.path(id), diff: id => this.rawDiff(id), supplySession: id => supplySession(mark, 'reviewer', id), onCost: (usd, basis) => { this.spentBases.add(basis); this.spent += usd; this.spentBy.review += usd; this.changed(); },
+      model: acp ? (acp.reviewer ?? acp.lead).model ?? null : model, cwd: id => this.spaces.path(id), diff: id => this.rawDiff(id), onCost: (usd, basis) => { this.spentBases.add(basis); this.spent += usd; this.spentBy.review += usd; this.changed(); },
     });
+    this.roundtable = acp ? new Roundtable({
+      db: this.db, scheduler: this.scheduler, projectRoot: this.projectRoot,
+      proposers: () => this.proposers(),
+      toLead: text => this.lead.notify(text),
+      startTicket: async () => { await this.dispatcher.pump(); },
+      onCost: (usd, basis) => { this.spentBases.add(basis); this.spent += usd; this.spentBy.lead += usd; this.changed(); },
+      onChange: () => this.changed(), clock: this.now, ...(o.proposeTimeoutMs ? { proposeTimeoutMs: o.proposeTimeoutMs } : {}),
+      signal: this.quit.signal, track: w => this.inBackground(w),
+    }) : null;
+    this.splits = acp ? new Splits({
+      db: this.db, scheduler: this.scheduler, projectRoot: this.projectRoot,
+      splitter: () => this.proposers().find(p => p.agent === acp.worker.agent) ?? null,
+      startTicket: async () => { await this.dispatcher.pump(); },
+      onCost: (usd, basis) => { this.spentBases.add(basis); this.spent += usd; this.spentBy.lead += usd; this.changed(); },
+      onChange: () => this.changed(), clock: this.now, signal: this.quit.signal, track: w => this.inBackground(w),
+    }) : null;
+    this.chains = new Chains({ db: this.db, scheduler: this.scheduler, startTicket: async () => { await this.dispatcher.pump(); }, onChange: () => this.changed(), clock: this.now });
     this.dispatcher.onActivity(a => this.track(a));
   }
 
+  /**
+   * The roundtable's proposers (A6): the agents the boss chose for the gremlins, the review and the lead, each once
+   * (boss's answer 2026-11-20). Each proposes on the model and effort of the first role it plays.
+   */
+  private proposers(): Proposer[] {
+    const acp = this.o.settings.shell === 'acp' ? this.o.settings.acp : undefined;
+    if (!acp) return [];
+    const seen = new Set<string>(), out: Proposer[] = [];
+    for (const role of [acp.worker, acp.reviewer ?? acp.lead, acp.lead]) {
+      if (seen.has(role.agent)) continue;
+      seen.add(role.agent);
+      out.push({ agent: role.agent, label: agentName(role.agent), shell: this.roleShell(role), model: role.model ?? null, effort: role.effort ?? null });
+    }
+    return out;
+  }
+
+  /** The boss picks Plan A or B: a ticket opens and gets going (A6). */
+  async pickPlan(roundtableId: number, which: 'A' | 'B'): Promise<number> {
+    if (!this.roundtable) throw new Error('V8_NO_ROUNDTABLE');
+    const id = await this.roundtable.pick(roundtableId, which);
+    this.pushFeed(tr('圆桌'), tr('你选了 Plan {0}，开了工单 #{1}', [which, id]), 'boss');
+    this.changed();
+    return id;
+  }
+
+  /**
+   * 巡查 (A11): 压垮 and 跑偏, beside the dispatcher's 卡住. Warnings go to the boss through the talk bar, once per
+   * ticket and kind; nothing is stopped. Returns what it warned about, for tests.
+   */
+  async patrol(): Promise<string[]> {
+    const now = this.now(), L = this.patrolLimits, said: string[] = [];
+    const tickets = this.scheduler.tickets();
+    const spent = (id: number) => { const l = this.ticketLive.get(id); return l ? { elapsedMs: l.elapsedMs + (l.startedAt ? now - l.startedAt : 0), costUsd: l.cost } : null; };
+    const finished = tickets.filter(t => t.state === 'DONE' || t.state === 'REVIEW').map(t => spent(t.id)).filter((x): x is { elapsedMs: number; costUsd: number } => !!x && x.elapsedMs > 0);
+    for (const t of tickets.filter(x => x.state === 'WORKING')) {
+      const s = spent(t.id);
+      if (!s) continue;
+      const p = this.patrolled.get(t.id) ?? { glancedAt: 0, warned: new Set<string>() };
+      this.patrolled.set(t.id, p);
+      const o = overload(s, finished, L);
+      if (o && !p.warned.has(o.what)) {
+        p.warned.add(o.what);
+        const text = tr('巡查：工单 #{0}「{1}」可能压垮了——{2}。要不要叫停你定。', [t.id, t.title, overloadWords(o)]);
+        this.scheduler.leadSaid(text, t.id); this.pushFeed(tr('巡查'), text.slice(3), 'question'); said.push(text);
+      }
+      // 跑偏: a glance by the lead's agent, only for work that has run a while (boss's answer 2026-11-20).
+      if (this.thinker && s.elapsedMs >= L.glanceAfterMs && now - p.glancedAt >= L.glanceEveryMs && !this.glancing.has(t.id) && !p.warned.has('drift')) {
+        p.glancedAt = now;
+        this.glancing.add(t.id);
+        const live = this.ticketLive.get(t.id);
+        const acp = this.o.settings.acp!;
+        try {
+          const r = await oneShot({
+            shell: this.thinker, tool: GLANCE_TOOL, nudge: GLANCE_NUDGE, accept: acceptGlance,
+            spec: { role: 'reviewer', cwd: join(this.o.stateDir, 'lead-room'), model: acp.lead.model ?? null, systemPrompt: GLANCE_SYSTEM, builtinTools: false },
+            prompt: glanceBrief({ request: t.originalRequest, routingNote: t.routingNote, minutes: Math.round(s.elapsedMs / 60_000),
+              actions: (live?.log ?? []).filter(l => l.kind !== '说').slice(0, 12).map(l => (l.kind + ' ' + l.text).trim()), files: [...(live?.files.keys() ?? [])].slice(0, 20) }),
+            onCost: (usd, basis) => { this.spentBases.add(basis); this.spent += usd; this.spentBy.lead += usd; },
+            timeoutMs: 5 * 60_000, signal: this.quit.signal,
+          });
+          if (r.ok && !r.value.onTrack && this.scheduler.state(t.id) === 'WORKING') {
+            p.warned.add('drift');
+            const text = tr('巡查：工单 #{0}「{1}」可能跑偏了——{2}。还在干，要不要叫停或者跟它说一声你定。', [t.id, t.title, r.value.reason]);
+            this.scheduler.leadSaid(text, t.id); this.pushFeed(tr('巡查'), text.slice(3), 'question'); said.push(text);
+          }
+        } finally { this.glancing.delete(t.id); }
+      }
+    }
+    for (const id of [...this.patrolled.keys()]) if (!tickets.some(t => t.id === id && t.state === 'WORKING')) this.patrolled.delete(id);
+    if (said.length) this.changed();
+    return said;
+  }
+
   async start(): Promise<void> {
-    await this.supply?.start();
+    // A ticket that ended while the app was down (or before this fix) may still hold its big files read-only.
+    for (const t of this.scheduler.tickets()) if (t.state === 'DONE' || t.state === 'STOPPED') this.spaces.release(t.id);
     await this.lead.start();
     await this.dispatcher.start();
     this.reviewer?.start();
+    this.roundtable?.resumeAfterRestart();
+    this.splits?.resumeAfterRestart();
+    this.patrolTimer = setInterval(() => { this.inBackground(this.patrol()); }, this.patrolLimits.everyMs);
+    this.patrolTimer.unref?.();
     this.quotaTimer = setInterval(() => { void this.checkQuota(); }, this.o.quotaPollMs ?? 60_000);
     this.quotaTimer.unref?.();
     this.changed();
@@ -195,15 +320,15 @@ export class V8Workbench {
 
   private async retune(ticketId: number, how: 'model' | 'effort', s: { model?: string | null; effort?: string | null }): Promise<void> {
     this.scheduler.setTicketSupply(ticketId, s);
-    const what = how === 'model' ? '模型换成 ' + (s.model ?? '默认') : '推理档位换成 ' + (s.effort ?? '默认');
+    const what = how === 'model' ? tr('模型换成 ') + (s.model ?? tr('默认')) : tr('推理档位换成 ') + (s.effort ?? tr('默认'));
     if (this.scheduler.state(ticketId) === 'WAITING_QUOTA') {
       this.scheduler.resumeFromQuota(ticketId, how);
-      this.pushFeed(this.label(ticketId), what + '，接着干', 'boss');
+      this.pushFeed(this.label(ticketId), what + tr('，接着干'), 'boss');
     } else if (this.dispatcher.isOpening(ticketId)) {
       // Still opening its session: it picks the new setting up before its first word (Dispatcher.launch).
-      this.pushFeed(this.label(ticketId), what + '，开工就用新的', 'boss');
+      this.pushFeed(this.label(ticketId), what + tr('，开工就用新的'), 'boss');
     } else if (await this.dispatcher.pause(ticketId, () => { this.scheduler.restartRunning(ticketId, how); })) {
-      this.pushFeed(this.label(ticketId), what + '，停一下接着干', 'boss');
+      this.pushFeed(this.label(ticketId), what + tr('，停一下接着干'), 'boss');
     }
     await this.dispatcher.pump(); this.changed();
   }
@@ -216,10 +341,10 @@ export class V8Workbench {
     const agent = this.workerAgent();
     const q = agent && this.o.quotaOf ? await this.o.quotaOf(agent).catch(() => null) : null;
     const resetsAt = soonestBack(q);
-    const when = resetsAt ? new Date(resetsAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' 额度重置后接着干' : '不知道额度几点重置，过一阵再试';
+    const when = resetsAt ? new Date(resetsAt).toLocaleString(dateLocale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + tr(' 额度重置后接着干') : tr('不知道额度几点重置，过一阵再试');
     const paused = await this.dispatcher.pause(ticketId, id => { this.scheduler.assignmentOutOfQuota(id, { resetsAt, detail: when, byBoss: true }); });
     if (!paused) throw new Error('V8_NOT_WORKING');
-    this.pushFeed(this.label(ticketId), '先停下等额度（' + when + '）', 'boss');
+    this.pushFeed(this.label(ticketId), tr('先停下等额度（') + when + tr('）'), 'boss');
     this.changed();
     return { resetsAt };
   }
@@ -239,7 +364,7 @@ export class V8Workbench {
       try {
         this.scheduler.setTicketSupply(ticketId, { model: rule.model, ...(rule.effort ? { effort: rule.effort } : {}) });
         this.scheduler.resumeFromQuota(ticketId, 'model');
-        this.pushFeed(who, `额度用完，按你定的规矩换成 ${rule.model}${rule.effort ? '（' + rule.effort + ' 档）' : ''}接着干`, 'boss');
+        this.pushFeed(who, tr('额度用完，按你定的规矩换成 {0}{1}接着干', [rule.model, rule.effort ? tr('（{0} 档）', [rule.effort]) : '']), 'boss');
         await this.dispatcher.pump(); this.changed();
         return;
       } catch { /* moved on meanwhile: fall through to waiting */ }
@@ -251,14 +376,14 @@ export class V8Workbench {
       if (back !== null && back > this.now()) this.scheduler.setQuotaReset(ticketId, back);
       else back = null;
     }
-    const when = back ? new Date(back).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' 额度重置后自己接着干' : '不知道额度几点重置，过一阵再试';
-    const why = rule?.do === 'switch' && rule.model ? `已经在用备用的 ${rule.model}，也用完了，等额度` : '按你定的规矩等额度';
-    this.pushFeed(who, `额度用完，${why}（${when}）`, 'question');
+    const when = back ? new Date(back).toLocaleString(dateLocale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + tr(' 额度重置后自己接着干') : tr('不知道额度几点重置，过一阵再试');
+    const why = rule?.do === 'switch' && rule.model ? tr('已经在用备用的 {0}，也用完了，等额度', [rule.model]) : tr('按你定的规矩等额度');
+    this.pushFeed(who, tr('额度用完，{0}（{1}）', [why, when]), 'question');
     this.changed();
   }
 
   /** What the boss calls the lead (requirement 26). */
-  leadName(): string { return this.o.settings.leadName?.trim().slice(0, 20) || '小怪A'; }
+  leadName(): string { return this.o.settings.leadName?.trim().slice(0, 20) || tr('主理小怪'); }
 
   /** The agent the gremlins run on, when they run on an ACP agent. */
   workerAgent(): string | null { return this.o.settings.shell === 'acp' ? this.o.settings.acp?.worker.agent ?? null : null; }
@@ -266,16 +391,15 @@ export class V8Workbench {
   private quotaTimer: ReturnType<typeof setInterval> | null = null;
 
   async shutdown(): Promise<void> {
+    this.quit.abort();
+    await Promise.allSettled([...this.background]);
     if (this.quotaTimer) { clearInterval(this.quotaTimer); this.quotaTimer = null; }
+    if (this.patrolTimer) { clearInterval(this.patrolTimer); this.patrolTimer = null; }
     await this.reviewer?.stop();
     await this.dispatcher.shutdown();
     await this.lead.stop();
-    await this.supply?.stop();
     this.db.close();
   }
-
-  /** The supply layer at a glance (v8 计划书 S1.6). Null when no gateway is configured. */
-  supplyStatus(): SupplyStatus | null { return this.supply?.status() ?? null; }
 
   onChange(fn: () => void): () => void { this.listeners.add(fn); return () => this.listeners.delete(fn); }
 
@@ -284,7 +408,7 @@ export class V8Workbench {
   say(text: string): number { const id = this.lead.bossSays(text); this.changed(); return id; }
   /** An answer to a gremlin's question, or anything else the boss says to one ticket. */
   async tell(ticketId: number, text: string): Promise<void> { await this.dispatcher.tell(ticketId, text); this.changed(); }
-  async stop(ticketId: number): Promise<void> { await this.dispatcher.stop(ticketId); this.changed(); }
+  async stop(ticketId: number): Promise<void> { await this.dispatcher.stop(ticketId); this.spaces.release(ticketId); this.changed(); }
   /** The boss asks for a review of work that reached them unreviewed. */
   reviewAgain(ticketId: number): void {
     if (!this.reviewer || !this.scheduler.requestReview(ticketId)) throw new Error('V8_NOTHING_TO_REVIEW');
@@ -298,15 +422,100 @@ export class V8Workbench {
    * names the files), so the boss's own edits are never overwritten.
    */
   accept(ticketId: number): { applied: string[] } {
-    const r = this.spaces.base(ticketId) ? this.spaces.apply(ticketId) : { applied: [], conflicts: [] };
-    if (r.conflicts.length) throw new Error('V8_APPLY_CONFLICT: ' + r.conflicts.join('、'));
+    // Only work that is waiting for the boss goes into the project: a stale page must not write first and fail after
+    // (C3 review, finding 4).
+    if (this.scheduler.state(ticketId) !== 'REVIEW') throw new Error('V8_NOT_AWAITING_REVIEW');
+    // The big files it linked in are writable again before the project's copies are replaced.
+    this.spaces.release(ticketId);
+    let r: { applied: string[]; conflicts: string[] };
+    // Not accepted, by a conflict or a failure: the ticket is still open, so its big files are read-only again.
+    try { r = this.spaces.base(ticketId) ? this.spaces.apply(ticketId) : { applied: [], conflicts: [] }; } catch (err) { this.spaces.lock(ticketId); throw err; }
+    if (r.conflicts.length) this.spaces.lock(ticketId);
+    if (r.conflicts.length) throw new Error('V8_APPLY_CONFLICT: ' + r.conflicts.join(tr('、')));
     this.scheduler.confirmTicket(ticketId); this.mark('passed'); this.changed();
+    this.chains.accepted(ticketId, r.applied);
+    this.inBackground(this.captureNotes(ticketId));
     return { applied: r.applied };
   }
-  async reject(ticketId: number, why: string): Promise<void> { await this.tell(ticketId, '打回重做：' + (why.trim() || '没写原因')); this.mark('refused'); }
+
+  /**
+   * A10: after the boss accepts a ticket, the lead's agent reads his words on it and the report once and writes the
+   * few lines worth keeping into the project's notebook (notes.ts). Off in the settings, or without an agent for the
+   * lead, nothing is written. Returns the lines added.
+   */
+  async captureNotes(ticketId: number): Promise<string[]> {
+    if (!this.thinker || this.o.notesOn?.() === false) return [];
+    const t = this.scheduler.ticket(ticketId);
+    const bossLines = this.scheduler.messages(ticketId).filter(m => m.author === 'boss' && m.kind === 'say' && typeof m.body === 'string').map(m => String(m.body));
+    const rep = this.scheduler.latestReport(ticketId);
+    const report = rep?.kind === 'done' ? [rep.summary, rep.verification.command, rep.verification.output.slice(0, 2000)].join('\n') : '';
+    const notebook = this.notes.list().map(n => n.text);
+    const bossWords = [t.originalRequest, ...bossLines].join('\n');
+    const acp = this.o.settings.acp!;
+    const r = await oneShot({
+      shell: this.thinker, tool: NOTES_TOOL, nudge: NOTES_NUDGE,
+      accept: raw => acceptNotes(raw, { bossWords, report, notebook }),
+      spec: { role: 'reviewer', cwd: join(this.o.stateDir, 'lead-room'), model: acp.lead.model ?? null, systemPrompt: NOTES_SYSTEM, builtinTools: false },
+      prompt: notesBrief({ request: t.originalRequest, bossLines, report: report || null, notebook }),
+      signal: this.quit.signal,
+      onCost: (usd, basis) => { this.spentBases.add(basis); this.spent += usd; this.spentBy.lead += usd; },
+      timeoutMs: 5 * 60_000,
+    });
+    if (!r.ok || !r.value.length || this.quit.signal.aborted) return [];
+    const added = this.notes.addFrom(r.value, ticketId).map(n => n.text);
+    this.pushFeed(tr('笔记'), tr('从工单 #{0} 记了 {1} 条：{2}', [ticketId, added.length, added.join(tr('；'))]), 'lead');
+    this.changed();
+    return added;
+  }
+
+  /** A12: the boss approves a split (split) or has it done whole (whole). */
+  async decideSplit(id: number, how: 'split' | 'whole'): Promise<number[]> {
+    if (!this.splits) throw new Error('V8_NOTHING_TO_DECIDE');
+    const t = await this.splits.decide(id, how); this.changed(); return t;
+  }
+
+  /** A15: the boss presses "开下一道". */
+  async nextStage(chainId: number): Promise<number> { const id = await this.chains.next(chainId); this.changed(); return id; }
+
+  /** A10: the notebook for the notes page. */
+  notesView(): NotesView {
+    return { notes: this.notes.list(), capture: this.o.notesOn?.() !== false, canCapture: !!this.thinker };
+  }
+  noteAdd(text: string): NotesView { this.notes.add(text); this.changed(); return this.notesView(); }
+  noteEdit(id: number, text: string): NotesView { this.notes.edit(id, text); this.changed(); return this.notesView(); }
+  noteRemove(id: number): NotesView { this.notes.remove(id); this.changed(); return this.notesView(); }
+  async reject(ticketId: number, why: string): Promise<void> { await this.tell(ticketId, tr('打回重做：') + (why.trim() || tr('没写原因'))); this.mark('refused'); }
   /** Try a stuck or failed ticket again. With another model (or later another agent) it starts a fresh session that
    *  picks up from the directory, since the old session cannot be read by it (S2.7). */
+  /**
+   * The slots the settings ask for (规范第 5 节: two by default, up to eight, plus one emergency slot for work the boss
+   * just spoke to). Applied even when work was left running; only removing a slot that holds running work is refused,
+   * and then the old slots stay until that work is done.
+   */
+  private applySlots(s: V8Settings): void {
+    const count = Math.min(MAX_SLOTS, Math.max(1, Math.floor(s.slots ?? 2)));
+    // With agents from the roster each role names its own model; the slots show the gremlins'.
+    const model = (s.shell === 'acp' ? s.acp?.worker.model : null) ?? null;
+    const slots: SlotConfig[] = Array.from({ length: count }, (_, i) => ({ id: 'slot-' + (i + 1), label: tr('工位 ') + String(i + 1).padStart(2, '0'), model, emergency: false }));
+    if (s.emergencySlot !== false) slots.push({ id: 'slot-emergency', label: tr('应急'), model, emergency: true });
+    if (JSON.stringify(this.scheduler.slots()) !== JSON.stringify(slots)) {
+      try { this.scheduler.setSlots(slots); } catch (err) { if (!(err instanceof Error && err.message === 'V8_SLOT_BUSY')) throw err; }
+    }
+  }
+
+  /** Settings that apply while work goes on (老板 2026-11-20 A1): the slots and the spending cap. */
+  async applyLive(s: V8Settings): Promise<void> {
+    this.o.settings = s;
+    this.applySlots(s);
+    this.capUsd = capOf(s);
+    await this.dispatcher.pump();
+    this.changed();
+  }
+
   async retry(ticketId: number, o: { model?: string; fresh?: boolean } = {}): Promise<void> {
+    // A ticket stopped at the spending cap may spend the same again.
+    const live = this.live(ticketId);   // read back after a restart too
+    if (this.capUsd && live && live.cost >= (this.allowance.get(ticketId) ?? this.capUsd)) { this.allowance.set(ticketId, live.cost + this.capUsd); this.keepSpend(ticketId); }
     if (o.model) this.scheduler.setTicketSupply(ticketId, { model: o.model });
     this.scheduler.retryTicket(ticketId, { fresh: o.fresh ?? false });
     await this.dispatcher.pump(); this.changed();
@@ -335,12 +544,10 @@ export class V8Workbench {
       leadName: this.leadName(),
       harness: this.o.settings.shell === 'acp' && this.o.settings.acp
         ? { kind: 'acp', label: this.acpLabel(this.o.settings.acp) }
-        : this.o.settings.shell === 'omp'
-        ? { kind: 'omp', label: 'oh-my-pi' + (this.supply?.origin() ? ' · 经 Magpie' : '') }
-        : { kind: 'fake', label: '演示小怪（不调用模型）' + (this.supply?.origin() ? ' · Magpie 已启动' : '') },
+        : { kind: 'fake', label: tr('演示小怪（不调用模型）') },
       agents: this.o.settings.shell === 'acp' && this.o.settings.acp
         ? { lead: this.o.settings.acp.lead.model ?? null, review: (this.o.settings.acp.reviewer ?? this.o.settings.acp.lead).model ?? null }
-        : { lead: this.o.settings.model ?? null, review: this.o.settings.model ?? null },
+        : { lead: null, review: null },
       now,
       slots: normal,
       emergency: emergency ? slotOf(emergency, 1) : null,
@@ -354,6 +561,9 @@ export class V8Workbench {
       done: tickets.filter(t => t.state === 'DONE').length,
       spentTodayUsd: this.spent,
       spentSure: sureOf(this.spentBases),
+      roundtables: this.roundtable?.views() ?? [],
+      chains: this.chains.views(),
+      splits: this.splits?.views() ?? [],
     };
   }
 
@@ -386,12 +596,17 @@ export class V8Workbench {
     const done = r.kind === 'done' ? r as DoneReport : null;
     return {
       ticketId, title: view.title, originalRequest: view.originalRequest,
-      summary: done ? done.summary : '它说不用做：' + (r.kind === 'nothing' ? r.reason : ''),
+      summary: done ? done.summary : tr('它说不用做：') + (r.kind === 'nothing' ? r.reason : ''),
       files: done ? done.changed.map(p => t?.files.get(p) ?? { path: p, plus: 0, minus: 0 }) : [],
       diff: done ? this.diff(ticketId) : '',
       verification: done ? done.verification : { command: '', output: '' },
       elapsedMs: t?.elapsedMs ?? 0, costUsd: t?.cost ?? 0, costSure: sureOf(t?.bases ?? []), ...this.reviewOf(ticketId), shots: null,
     };
+  }
+
+  /** Money spent outside tickets: chatting with an agent on the roster page, or having it retell a skill. */
+  spendOutside(usd: number, basis: import('./shell').CostBasis): void {
+    this.spentBases.add(basis); this.spent += usd; this.spentBy.other += usd; this.changed();
   }
 
   /** 账本: where the money went since the app started. */
@@ -401,16 +616,16 @@ export class V8Workbench {
       return { id: t.id, title: t.title, state: t.state, costUsd: l?.cost ?? 0, elapsedMs: (l?.elapsedMs ?? 0) + (l?.startedAt ? this.now() - l.startedAt : 0) };
     }).sort((a, b) => b.costUsd - a.costUsd || b.id - a.id);
     const gremlins = byTicket.reduce((s, t) => s + t.costUsd, 0);
-    return { totalUsd: this.spent, totalSure: sureOf(this.spentBases), bySource: { gremlins, lead: this.spentBy.lead, review: this.spentBy.review }, byTicket,
-      capUsd: this.o.settings.shell === 'omp' ? this.o.settings.maxCostUsd ?? 0.5 : null };
+    return { totalUsd: this.spent, totalSure: sureOf(this.spentBases), bySource: { gremlins, lead: this.spentBy.lead, review: this.spentBy.review, other: this.spentBy.other }, byTicket,
+      capUsd: this.capUsd };
   }
 
   /** 档案柜: every ticket, newest first, with a one-line outcome. */
   archive(): import('../../shared/v8/board').ArchiveItem[] {
     return this.scheduler.tickets().reverse().map(t => {
       const r = this.scheduler.latestReport(t.id);
-      const outcome = t.state === 'STOPPED' ? '老板叫停了' : !r ? null
-        : r.kind === 'done' ? r.summary : r.kind === 'question' ? '问：' + r.question : r.kind === 'blocked' ? '卡在：' + r.where : r.kind === 'failed' ? '失败：' + r.reason : '不用做：' + r.reason;
+      const outcome = t.state === 'STOPPED' ? tr('老板叫停了') : !r ? null
+        : r.kind === 'done' ? r.summary : r.kind === 'question' ? tr('问：') + r.question : r.kind === 'blocked' ? tr('卡在：') + r.where : r.kind === 'failed' ? tr('失败：') + r.reason : tr('不用做：') + r.reason;
       return { id: t.id, title: t.title, originalRequest: t.originalRequest, state: t.state, createdAt: t.createdAt, endedAt: t.endedAt, outcome };
     });
   }
@@ -421,24 +636,24 @@ export class V8Workbench {
     for (const m of this.scheduler.messages(ticketId, 500)) {
       const body = m.body;
       if (m.kind === 'report' && typeof body === 'object') {
-        const text = body.kind === 'done' ? `做完了：${body.summary}（验证：${body.verification.command} → ${body.verification.output.trim().split('\n').pop()}）`
-          : body.kind === 'question' ? '问你：' + body.question : body.kind === 'blocked' ? '卡住了：' + body.where : body.kind === 'failed' ? '失败了：' + body.reason : '发现不用做：' + body.reason;
-        items.push({ id: 'm' + m.id, at: m.createdAt, who: m.author === 'system' ? 'system' : 'gremlin', kind: '报告', text });
+        const text = body.kind === 'done' ? tr('做完了：{0}（验证：{1} → {2}）', [body.summary, body.verification.command, body.verification.output.trim().split('\n').pop()])
+          : body.kind === 'question' ? tr('问你：') + body.question : body.kind === 'blocked' ? tr('卡住了：') + body.where : body.kind === 'failed' ? tr('失败了：') + body.reason : tr('发现不用做：') + body.reason;
+        items.push({ id: 'm' + m.id, at: m.createdAt, who: m.author === 'system' ? 'system' : 'gremlin', kind: tr('报告'), text });
       } else {
-        items.push({ id: 'm' + m.id, at: m.createdAt, who: m.author === 'boss' ? 'boss' : m.author === 'lead' ? 'lead' : m.author === 'worker' ? 'gremlin' : /审查/.test(String(body)) ? 'review' : 'system', kind: m.author === 'boss' ? '你说' : m.author === 'lead' ? this.leadName() : '记录', text: String(body) });
+        items.push({ id: 'm' + m.id, at: m.createdAt, who: m.author === 'boss' ? 'boss' : m.author === 'lead' ? 'lead' : m.author === 'worker' ? 'gremlin' : anyLang('审查').some(w => String(body).includes(w)) ? 'review' : 'system', kind: m.author === 'boss' ? tr('你说') : m.author === 'lead' ? this.leadName() : tr('记录'), text: String(body) });
       }
     }
     for (const r of this.scheduler.reviews({ ticketId })) {
-      items.push({ id: 'r' + r.id, at: r.createdAt, who: 'review', kind: r.verdict === 'passed' ? '审查通过' : '审查打回', text: r.reason + '　' + r.checks.map(c => (c.ok ? '✓' : '✕') + c.label).join(' ') });
+      items.push({ id: 'r' + r.id, at: r.createdAt, who: 'review', kind: r.verdict === 'passed' ? tr('审查通过') : tr('审查打回'), text: r.reason + tr('　') + r.checks.map(c => (c.ok ? '✓' : '✕') + c.label).join(' ') });
     }
     const live = this.ticketLive.get(ticketId)?.log ?? [];
-    const firstReport = items.find(i => i.kind === '报告')?.at ?? null;
+    const firstReport = items.find(i => i.kind === tr('报告'))?.at ?? null;
     // The gremlin's actions have no timestamps of their own; they come before its first report.
     const acts = [...live].reverse().filter(l => l.kind !== '说').slice(-12).map((l, i): import('../../shared/v8/board').TimelineItem => ({ id: 'a' + i, at: null, who: 'gremlin', kind: l.kind, text: l.text }));
     items.sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
     // The boss's own words live in the lead's conversation, not on the ticket; the ticket keeps them verbatim.
     if (!items.some(i => i.who === 'boss')) {
-      try { const t = this.scheduler.ticket(ticketId); items.unshift({ id: 'request', at: t.createdAt, who: 'boss', kind: '你说', text: t.originalRequest }); } catch { /* unknown ticket */ }
+      try { const t = this.scheduler.ticket(ticketId); items.unshift({ id: 'request', at: t.createdAt, who: 'boss', kind: tr('你说'), text: t.originalRequest }); } catch { /* unknown ticket */ }
     }
     if (acts.length) {
       const at = firstReport === null ? items.length : items.findIndex(i => i.at === firstReport);
@@ -450,7 +665,7 @@ export class V8Workbench {
   /** The review page: the latest verdict with its checks, and today's record. */
   reviewDetail(): import('../../shared/v8/board').ReviewDetail {
     const today = this.scheduler.reviews({ since: startOfDay(this.now()) });
-    const title = (id: number) => { try { return this.scheduler.ticket(id).title; } catch { return '工单 #' + id; } };
+    const title = (id: number) => { try { return this.scheduler.ticket(id).title; } catch { return tr('工单 #') + id; } };
     const latest = today[0] ?? this.scheduler.reviews()[0];
     return {
       latest: latest ? { title: title(latest.ticketId), checks: latest.checks } : null,
@@ -464,19 +679,27 @@ export class V8Workbench {
     if (!this.reviewer) return { enabled: false, passedToday: 0, lastPassed: null, current: null };
     const today = this.scheduler.reviews({ since: startOfDay(this.now()) });
     const passed = today.filter(r => r.verdict === 'passed');
-    const title = (id: number) => { try { return this.scheduler.ticket(id).title; } catch { return '工单 #' + id; } };
+    const title = (id: number) => { try { return this.scheduler.ticket(id).title; } catch { return tr('工单 #') + id; } };
     return { enabled: true, passedToday: passed.length, lastPassed: passed[0] ? title(passed[0].ticketId) : null, current: this.reviewing !== null ? title(this.reviewing) : null };
   }
 
   private reviewOf(ticketId: number): { reviewPassed: boolean; reviewNote: string | null } {
     if (!this.reviewer) return { reviewPassed: false, reviewNote: null };
     const latest = this.scheduler.reviews({ ticketId })[0];
-    if (latest?.verdict === 'passed') return { reviewPassed: true, reviewNote: null };
+    // A pass counts only for the report it looked at: work redone since then has not been reviewed (C3 review,
+    // finding 10).
+    const report = [...this.scheduler.messages(ticketId)].reverse().find(m => m.kind === 'report');
+    if (latest?.verdict === 'passed' && latest.reportMessageId === report?.id) {
+      // Requirement 32/33: review by the worker's own agent is no second opinion; the pass says so (C3, finding 11).
+      const acp = this.o.settings.shell === 'acp' ? this.o.settings.acp : undefined;
+      const same = !!acp && (acp.reviewer ?? acp.lead).agent === acp.worker.agent;
+      return { reviewPassed: true, reviewNote: same ? tr('这次审查和干活用的是同一家 agent，不算换一家审。') : null };
+    }
     const notes = [...this.scheduler.messages(ticketId)].reverse().filter(m => m.author === 'system');
-    const asked = notes.findIndex(m => /^老板要求重新审/.test(String(m.body)));
-    const skippedAt = notes.findIndex(m => /^审查/.test(String(m.body)));
+    const asked = notes.findIndex(m => anyLang('老板要求重新审一次。').includes(String(m.body)));
+    const skippedAt = notes.findIndex(m => anyLang('审查').some(w => String(m.body).startsWith(w)));
     const skipped = skippedAt >= 0 && (asked < 0 || skippedAt < asked) ? notes[skippedAt] : undefined;
-    return { reviewPassed: false, reviewNote: latest ? '审查打回了两次，交给你决定：' + latest.reason : skipped ? String(skipped.body) : null };
+    return { reviewPassed: false, reviewNote: latest ? tr('审查打回了两次，交给你决定：') + latest.reason : skipped ? String(skipped.body) : null };
   }
 
   /** Everything the gremlin changed, for the review gremlin (build and test leftovers left out). */
@@ -488,13 +711,13 @@ export class V8Workbench {
    */
   private acpLabel(acp: NonNullable<V8Settings['acp']>): string {
     const reviewer = acp.reviewer ?? acp.lead;
-    const parts = [`本机 agent · 小怪A 用 ${agentName(acp.lead.agent)}，干活用 ${agentName(acp.worker.agent)}`];
+    const parts = [tr('本机 agent · 主理小怪 用 {0}，干活用 {1}', [agentName(acp.lead.agent), agentName(acp.worker.agent)])];
     if (this.o.settings.review !== false) {
       parts.push(reviewer.agent === acp.worker.agent
-        ? `审查和干活是同一家（${agentName(reviewer.agent)}），不算换一家审`
-        : `审查用 ${agentName(reviewer.agent)}`);
+        ? tr('审查和干活是同一家（{0}），不算换一家审', [agentName(reviewer.agent)])
+        : tr('审查用 {0}', [agentName(reviewer.agent)]));
     }
-    return parts.join('，');
+    return parts.join(tr('，'));
   }
 
   /** One role played by an agent from the roster. It is looked up when a session opens, so a sign-in made after
@@ -510,17 +733,9 @@ export class V8Workbench {
     };
   }
 
+  /** Without agents of this computer: the scripted demo gremlins, which call no model. */
   private makeShell(): AgentShell {
-    const s = this.o.settings;
-    if (s.shell !== 'omp') return new FakeShell(demoScripts(this.o.demoPace ?? 1));
-    const omp = s.omp ?? {};
-    const env: Record<string, string> = {};
-    if (omp.keyFile) env[omp.keyEnv ?? 'OPENAI_API_KEY'] = readFileSync(omp.keyFile, 'utf8').replace(/\s+/g, '');
-    return new OmpShell({
-      exe: omp.exe ?? 'omp', agentDir: omp.agentDir ?? join(this.o.stateDir, 'omp-agent'), sessionDir: join(this.o.stateDir, 'sessions'),
-      env, extraPath: omp.extraPath ?? [], maxCostUsd: s.maxCostUsd ?? 0.5, readyTimeoutMs: 60000,
-      ...(this.supply ? { gateway: { origin: () => this.supply?.origin() ?? null, agentBase: join(this.o.stateDir, 'omp-via-gateway') } } : {}),
-    });
+    return new FakeShell(demoScripts(this.o.demoPace ?? 1));
   }
 
   /** A small git repository for the fake shell to "work" in, so the board works with nothing configured. */
@@ -528,7 +743,7 @@ export class V8Workbench {
     const root = join(this.o.stateDir, 'demo-repo');
     if (existsSync(join(root, '.git'))) return root;
     mkdirSync(join(root, 'src'), { recursive: true });
-    writeFileSync(join(root, 'README.md'), '# 演示项目\n\n新工作台的演示仓库。假的小怪只假装在这里干活，不会改文件。\n');
+    writeFileSync(join(root, 'README.md'), tr('# 演示项目\n\n新工作台的演示仓库。假的小怪只假装在这里干活，不会改文件。\n'));
     writeFileSync(join(root, 'src', 'demo.ts'), 'export const hello = () => "hello";\n');
     const git = (...a: string[]) => execFileSync('git', ['-C', root, ...a], { stdio: 'ignore', windowsHide: true });
     git('init', '-q'); git('add', '-A');
@@ -536,13 +751,17 @@ export class V8Workbench {
     return root;
   }
 
-  private projectName(): string { return this.o.settings.projectRoot ? this.projectRoot.split(/[\\/]/).filter(Boolean).pop() ?? '项目' : '演示项目'; }
+  private projectName(): string { return this.o.settings.projectRoot ? this.projectRoot.split(/[\\/]/).filter(Boolean).pop() ?? tr('项目') : tr('演示项目'); }
 
   /** The same change for the delivery page: less context, file headers shortened to the file's name. */
   private diff(ticketId: number): string {
-    return this.spaces.diff(ticketId, { context: 1, maxChars: 20000 })
-      .split('\n').filter(l => !/^(diff --git|index |@@|\+\+\+ |--- |new file mode)/.test(l) || l.startsWith('+++ '))
-      .map(l => (l.startsWith('+++ ') ? l.slice(6) : l)).slice(0, 200).join('\n');
+    const raw = this.spaces.diff(ticketId, { context: 1, maxChars: 20000 });
+    const lines = raw.split('\n').filter(l => !/^(diff --git|index |@@|\+\+\+ |--- |new file mode)/.test(l) || l.startsWith('+++ '))
+      .map(l => (l.startsWith('+++ ') ? l.slice(6) : l));
+    // Cut for the page, but never silently: every file accepting would put in is named (C3 review, finding 18).
+    if (lines.length <= 200 && raw.length < 20000) return lines.join('\n');
+    const all = this.spaces.changes(ticketId).map(c => c.path);
+    return [...lines.slice(0, 200), tr('…（改动太长，这里只显示了前面一部分。收下会放进项目的一共 {0} 个文件：{1}）', [all.length, all.join(tr('、'))])].join('\n');
   }
 
   private talk(tickets: TicketView[]): TalkLine[] {
@@ -561,13 +780,13 @@ export class V8Workbench {
   }
 
   private feedLines(): FeedLine[] {
-    const talk = this.scheduler.messages(null, 8).map((m): FeedLine => ({ id: 'm' + m.id, at: m.createdAt, who: m.author === 'boss' ? '你' : this.leadName(), text: String(m.body).replace(/\s+/g, ' ').slice(0, 60), tone: m.author === 'boss' ? 'boss' : 'lead' }));
+    const talk = this.scheduler.messages(null, 8).map((m): FeedLine => ({ id: 'm' + m.id, at: m.createdAt, who: m.author === 'boss' ? tr('你') : this.leadName(), text: String(m.body).replace(/\s+/g, ' ').slice(0, 60), tone: m.author === 'boss' ? 'boss' : 'lead' }));
     return [...this.feed, ...talk].sort((a, b) => b.at - a.at).slice(0, 8);
   }
 
   private label(ticketId: number): string {
     const t = this.scheduler.tickets().find(x => x.id === ticketId);
-    return this.scheduler.slots().find(s => s.id === t?.slotId)?.label ?? '工单 #' + ticketId;
+    return this.scheduler.slots().find(s => s.id === t?.slotId)?.label ?? tr('工单 #') + ticketId;
   }
 
   private pushFeed(who: string, text: string, tone: FeedLine['tone']): void {
@@ -579,8 +798,21 @@ export class V8Workbench {
 
   private live(ticketId: number): TicketLive {
     let t = this.ticketLive.get(ticketId);
-    if (!t) { t = { log: [], files: new Map(), cost: 0, bases: new Set(), startedAt: null, elapsedMs: 0 }; this.ticketLive.set(ticketId, t); }
+    if (!t) {
+      const kept = this.db.prepare('SELECT cost, allowance FROM v8_ticket_spend WHERE ticket_id=?').get(ticketId) as { cost: number; allowance: number | null } | undefined;
+      t = { log: [], files: new Map(), cost: kept?.cost ?? 0, bases: new Set(), startedAt: null, elapsedMs: 0 };
+      if (kept?.allowance != null && !this.allowance.has(ticketId)) this.allowance.set(ticketId, kept.allowance);
+      this.ticketLive.set(ticketId, t);
+    }
     return t;
+  }
+
+  /** Write down what a ticket has spent and how far it may go (see v8_ticket_spend). */
+  private keepSpend(ticketId: number): void {
+    const t = this.ticketLive.get(ticketId);
+    const a = this.allowance.get(ticketId);
+    this.db.prepare('INSERT INTO v8_ticket_spend(ticket_id,cost,allowance) VALUES(?,?,?) ON CONFLICT(ticket_id) DO UPDATE SET cost=excluded.cost, allowance=excluded.allowance')
+      .run(ticketId, t?.cost ?? 0, a !== undefined && Number.isFinite(a) ? a : null);
   }
 
   private track(a: Activity): void {
@@ -592,7 +824,7 @@ export class V8Workbench {
       case 'launched':
         this.slotLive.set(a.slotId, { ticketId: a.ticketId, startedAt: this.now(), live: null, phase: 'working', step: 0, reportingUntil: 0, cost: 0, bases: new Set() });
         t.startedAt = this.now();
-        this.pushFeed(this.label(a.ticketId), '开工：' + this.scheduler.ticket(a.ticketId).title, 'slot');
+        this.pushFeed(this.label(a.ticketId), tr('开工：') + this.scheduler.ticket(a.ticketId).title, 'slot');
         this.mark('event');
         break;
       case 'tool': {
@@ -612,41 +844,60 @@ export class V8Workbench {
         }
         break;
       }
-      case 'said': log('说', a.text); break;
-      case 'cost': t.cost += a.usd; t.bases.add(a.basis); this.spent += a.usd; this.spentBases.add(a.basis); if (s) { s.cost += a.usd; s.bases.add(a.basis); } break;
-      case 'approval': if (!a.allowed) { log('被拒', a.tool + ' ' + (a.detail.split('\n')[1] ?? '')); this.pushFeed(this.label(a.ticketId), '被拒绝：' + a.tool, 'question'); } break;
-      case 'refused': log('退回', a.code); break;
+      case 'said': log(tr('说'), a.text); break;
+      case 'cost': {
+        t.cost += a.usd; t.bases.add(a.basis); this.spent += a.usd; this.spentBases.add(a.basis); if (s) { s.cost += a.usd; s.bases.add(a.basis); }
+        this.keepSpend(a.ticketId);
+        const limit = this.capUsd ? this.allowance.get(a.ticketId) ?? this.capUsd : null;
+        if (limit !== null && t.cost >= limit && this.scheduler.state(a.ticketId) === 'WORKING') {
+          // Stopped once at this limit, as stuck (卡住) so it waits for the boss with "再试一次", which raises the limit
+          // (retry above). The work so far stays in its folder.
+          this.allowance.set(a.ticketId, Number.POSITIVE_INFINITY);
+          const where = tr('花到上限了（这件活设的上限是 ${0}，已经花了 ${1}）', [limit.toFixed(2), t.cost.toFixed(2)]);
+          this.pushFeed(this.label(a.ticketId), where + tr('，先停下等你决定'), 'question');
+          void this.dispatcher.pause(a.ticketId, id => {
+            this.scheduler.reportReceived(id, { kind: 'blocked', where, tried: tr('程序按你设的花费上限让它停下；做到一半的东西还在它的工作副本里。点"再试一次"让它再花这么多接着干。') });
+          }).catch(() => undefined).finally(() => {
+            if (this.allowance.get(a.ticketId) === Number.POSITIVE_INFINITY) this.allowance.set(a.ticketId, limit);
+            this.keepSpend(a.ticketId);
+            this.changed();
+          });
+        }
+        break;
+      }
+      case 'approval': if (!a.allowed) { log(tr('被拒'), a.tool + ' ' + (a.detail.split('\n')[1] ?? '')); this.pushFeed(this.label(a.ticketId), tr('被拒绝：') + a.tool, 'question'); } break;
+      case 'refused': log(tr('退回'), a.code); break;
       case 'reported': {
         if (s) { s.step = 4; s.reportingUntil = this.now() + 4000; }
         const kind = a.report.kind;
-        this.pushFeed(this.label(a.ticketId), kind === 'done' ? '做完了：' + a.report.summary : kind === 'question' ? '问：' + a.report.question : kind === 'blocked' ? '卡住：' + a.report.where : kind === 'failed' ? '失败：' + a.report.reason : '不用做：' + a.report.reason, kind === 'question' || kind === 'blocked' || kind === 'failed' ? 'question' : 'slot');
+        this.pushFeed(this.label(a.ticketId), kind === 'done' ? tr('做完了：') + a.report.summary : kind === 'question' ? tr('问：') + a.report.question : kind === 'blocked' ? tr('卡住：') + a.report.where : kind === 'failed' ? tr('失败：') + a.report.reason : tr('不用做：') + a.report.reason, kind === 'question' || kind === 'blocked' || kind === 'failed' ? 'question' : 'slot');
         this.mark(kind === 'done' || kind === 'nothing' ? 'event' : 'waiting');
         break;
       }
       case 'reviewing':
         this.reviewing = a.ticketId;
-        this.pushFeed('审查', '在审：' + this.scheduler.ticket(a.ticketId).title, 'review');
+        this.pushFeed(tr('审查'), tr('在审：') + this.scheduler.ticket(a.ticketId).title, 'review');
         break;
       case 'reviewed':
         if (this.reviewing === a.ticketId) this.reviewing = null;
-        this.pushFeed('审查', (a.outcome === 'passed' ? '通过：' : a.outcome === 'rejected' ? '打回：' : a.outcome === 'escalated' ? '打回两次，交给你：' : '没给结论：') + (a.outcome === 'passed' ? this.scheduler.ticket(a.ticketId).title : a.reason), 'review');
+        this.pushFeed(tr('审查'), (a.outcome === 'passed' ? tr('通过：') : a.outcome === 'rejected' ? tr('打回：') : a.outcome === 'escalated' ? tr('打回两次，交给你：') : tr('没给结论：')) + (a.outcome === 'passed' ? this.scheduler.ticket(a.ticketId).title : a.reason), 'review');
         this.mark(a.outcome === 'passed' ? 'passed' : a.outcome === 'skipped' ? 'waiting' : 'refused');
         break;
       case 'ended':
         if (t.startedAt) { t.elapsedMs += this.now() - t.startedAt; t.startedAt = null; }
         if (slotEntry && !(s && s.reportingUntil > this.now())) this.slotLive.delete(slotEntry[0]);
         else if (slotEntry) setTimeout(() => { if (this.slotLive.get(slotEntry[0])?.ticketId === a.ticketId) { this.slotLive.delete(slotEntry[0]); this.changed(); } }, 4000).unref?.();
-        if (a.why === 'exited' && this.scheduler.state(a.ticketId) !== 'WAITING_QUOTA') this.pushFeed(this.label(a.ticketId), '停下了，没交报告', 'question');
+        if (a.why === 'exited' && this.scheduler.state(a.ticketId) !== 'WAITING_QUOTA') this.pushFeed(this.label(a.ticketId), tr('停下了，没交报告'), 'question');
         break;
       case 'quota': {
-        log('额度', '用完了');
+        log(tr('额度'), tr('用完了'));
         this.mark('waiting');
         void this.applyQuotaRule(a.ticketId, a.resetsAt);
         break;
       }
       case 'probe':
-        if (a.status === 'SUSPECT_SILENT') this.pushFeed(this.label(a.ticketId), '好一阵没动静了，还在跑', 'question');
-        if (a.status === 'CONFIRMED_STALLED') this.pushFeed(this.label(a.ticketId), '超过时限还没交报告，先停下等你', 'question');
+        if (a.status === 'SUSPECT_SILENT') this.pushFeed(this.label(a.ticketId), tr('好一阵没动静了，还在跑'), 'question');
+        if (a.status === 'CONFIRMED_STALLED') this.pushFeed(this.label(a.ticketId), tr('超过时限还没交报告，先停下等你'), 'question');
         break;
     }
     this.changed();

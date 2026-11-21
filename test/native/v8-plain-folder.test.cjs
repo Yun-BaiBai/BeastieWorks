@@ -75,14 +75,14 @@ for (const git of [false, true]) {
   });
 }
 
-test('build leftovers are never put into the project', t => {
+test('test caches are never put into the project; a log or build output is, unless the project ignores it (C3 finding 14)', t => {
   const { project, spaces } = setup(t, false);
   const dir = spaces.ensure(1);
   fs.mkdirSync(path.join(dir, '__pycache__'));
   fs.writeFileSync(path.join(dir, '__pycache__', 'x.pyc'), 'junk');
-  fs.writeFileSync(path.join(dir, 'run.log'), 'junk');
+  fs.writeFileSync(path.join(dir, 'run.log'), 'render done\n');
   fs.writeFileSync(path.join(dir, '大纲.txt'), '四幕\n');
-  assert.deepEqual(spaces.apply(1).applied, ['大纲.txt']);
+  assert.deepEqual(spaces.apply(1).applied.sort(), ['run.log', '大纲.txt']);
   assert.equal(fs.existsSync(path.join(project, '__pycache__')), false);
-  assert.equal(fs.existsSync(path.join(project, 'run.log')), false);
+  assert.equal(fs.readFileSync(path.join(project, 'run.log'), 'utf8'), 'render done\n');
 });

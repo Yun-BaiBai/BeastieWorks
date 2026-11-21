@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n';
 import type { Delivery, Report, TicketState } from '../../shared/v8/tickets';
 import type { Scheduler } from './scheduler';
 import { quotaRefusal, probeLive, PROBE_DEFAULTS, type ProbeLimits, type ProbeStatus } from './hotswap';
@@ -17,9 +18,9 @@ export interface DispatcherOptions {
   workdir(ticketId: number): string | Promise<string>;
   /** Spec section 6. Until B3 brings the directory rule, the default refuses everything. */
   approve?(request: ApprovalRequest): boolean;
-  /** The supply session mark for a gremlin's assignment (v8 计划书 S1.5). */
-  supplySession?(ticketId: number, assignmentId: number): string;
   /** The skill library (第 6 步): a gremlin's brief names the skills that fit, and it can list and fetch them. */
+  /** A10: the project's notebook, under the boss's words. */
+  notes?: { briefLines(): string[] };
   skills?: { briefLines(about: string): string[]; call(name: string, args: unknown): { ok: true; text: string } | { ok: false; error: string }; tools: HostTool[] };
   /** The three-state probe (v8 计划书 S2.2): how often to look, and the limits. Defaults: every 30 s, 3 min, 90 min. */
   probe?: Partial<ProbeLimits> & { intervalMs?: number };
@@ -57,6 +58,8 @@ export class Dispatcher {
   private listeners = new Set<(a: Activity) => void>();
   private chain: Promise<void> = Promise.resolve();
   private watch: ReturnType<typeof setInterval> | null = null;
+  /** Set on shutdown: a session that finishes opening afterwards closes itself. */
+  private closed = false;
   private closing = new Set<Promise<void>>();
   private readonly now: () => number;
   private readonly limits: ProbeLimits;
@@ -87,7 +90,7 @@ export class Dispatcher {
       this.emit({ type: 'probe', ticketId: l.ticketId, status: p.status });
       if (p.status !== 'CONFIRMED_STALLED') continue;
       l.stopping = true;
-      this.scheduler.assignmentExited(l.assignmentId, `跑了 ${Math.round(this.limits.hardMs / 60_000)} 分钟还没交报告，先停下等老板决定`);
+      this.scheduler.assignmentExited(l.assignmentId, tr('跑了 {0} 分钟还没交报告，先停下等老板决定', [Math.round(this.limits.hardMs / 60_000)]));
       l.session.abort();
       await this.finish(l, 'exited');
     }
@@ -142,6 +145,9 @@ export class Dispatcher {
   /** Close every live session (app quit). Their assignments stay RUNNING and are recovered on the next start. */
   async shutdown(): Promise<void> {
     if (this.watch) { clearInterval(this.watch); this.watch = null; }
+    // Sessions still opening finish opening and close themselves (launch checks this) before anything else closes.
+    this.closed = true;
+    await Promise.race([this.chain.catch(() => undefined), new Promise(r => setTimeout(r, 15_000))]);
     const all = [...this.live.values()];
     this.live.clear();
     for (const l of all) { l.off(); await l.session.close().catch(() => undefined); }
@@ -163,7 +169,7 @@ export class Dispatcher {
     if (d.kind === 'steer') {
       const l = this.live.get(d.assignmentId);
       const ctx = this.scheduler.assignmentContext(d.assignmentId);
-      if (l) l.session.steer('老板说：' + ctx.riders[ctx.riders.length - 1]);
+      if (l) l.session.steer(tr('老板说：') + ctx.riders[ctx.riders.length - 1]);
     } else {
       await this.pump();
     }
@@ -176,7 +182,7 @@ export class Dispatcher {
     const slot = this.scheduler.slots().find(s => s.id === slotId);
     // The boss may have pinned this ticket to another model or account (S2.3); that wins over the slot's own.
     const pin = this.scheduler.ticketSupply(ticketId);
-    let session: ShellSession;
+    let session: ShellSession | null = null;
     this.opening.add(ticketId);
     try {
       session = await this.shell.open({
@@ -184,7 +190,6 @@ export class Dispatcher {
         ...(pin.effort ? { effort: pin.effort } : {}),
         ...(pin.account ? { supplyAccount: pin.account } : {}),
         systemPrompt: WORKER_SYSTEM, hostTools: [REPORT_TOOL, ...(this.options.skills?.tools ?? [])], builtinTools: true,
-        ...(this.options.supplySession ? { supplySession: this.options.supplySession(ticketId, assignmentId) } : {}),
       });
       this.scheduler.assignmentStarted(assignmentId, session.ref);
       // The boss may have switched the model or effort while the session was opening: use it from the first word.
@@ -194,19 +199,29 @@ export class Dispatcher {
     } catch (err) {
       this.opening.delete(ticketId);
       this.parked.delete(ticketId);
-      this.scheduler.assignmentExited(assignmentId, '开不了会话：' + (err instanceof Error ? err.message : String(err)));
+      // Opened but failing right after: the session is closed, never left running unmanaged (C3 review, finding 6).
+      if (session) await session.close().catch(() => undefined);
+      this.scheduler.assignmentExited(assignmentId, tr('开不了会话：') + (err instanceof Error ? err.message : String(err)));
       this.emit({ type: 'ended', ticketId, assignmentId, why: 'exited' });
       return;
     }
     this.opening.delete(ticketId);
+    // Stopped or closing while it was opening: the session goes, the gremlin never starts (C3 review, finding 6).
+    if (this.closed || this.scheduler.state(ticketId) === 'STOPPED') { this.parked.delete(ticketId); await session.close().catch(() => undefined); return; }
     const t0 = this.now();
     const l: Live = { ticketId, assignmentId, session, off: () => undefined, reported: false, nudged: false, stopping: false, startedAt: t0, lastAt: t0, probe: 'ACTIVE' };
     l.off = session.onEvent(e => { void this.onEvent(l, e); });
     this.live.set(assignmentId, l);
     this.emit({ type: 'launched', ticketId, assignmentId, slotId });
-    session.prompt(sessionRef
-      ? workerFollowUp({ recovery: ctx.recovery, riders: ctx.riders, retry: ctx.retry, reviewNotes: ctx.reviewNotes, resumed: ctx.resumed })
-      : workerBrief(ticket, { recovery: ctx.recovery, riders: ctx.riders }) + (this.options.skills?.briefLines(ticket.title + ' ' + ticket.originalRequest).join('\n') ?? ''));
+    // Only a session that really carries on the old one gets the short follow-up. An agent that cannot load an old
+    // session opens a new one (another ref): that one gets the whole brief again, the follow-up after it (C3 review,
+    // finding 8).
+    const resumed = !!sessionRef && session.ref === sessionRef;
+    const followUp = () => workerFollowUp({ recovery: ctx.recovery, riders: ctx.riders, retry: ctx.retry, reviewNotes: ctx.reviewNotes, resumed: ctx.resumed });
+    session.prompt(resumed
+      ? followUp()
+      : workerBrief(ticket, { recovery: ctx.recovery, riders: ctx.riders }) + (this.options.notes?.briefLines().join('\n') ?? '') + (this.options.skills?.briefLines(ticket.title + ' ' + ticket.originalRequest).join('\n') ?? '')
+        + (sessionRef ? '\n\n' + followUp() : ''));
     // 等一等 while it was opening: it stops now, after the brief is in its conversation so it can pick up from there.
     const parked = this.parked.get(ticketId);
     // Not awaited: launch runs inside the pump chain, and pause pumps again.
@@ -237,17 +252,17 @@ export class Dispatcher {
       case 'host_tool': {
         if (e.name !== REPORT_TOOL.name && this.options.skills?.tools.some(t => t.name === e.name)) {
           let r: { ok: true; text: string } | { ok: false; error: string };
-          try { r = this.options.skills.call(e.name, e.args); } catch (err) { r = { ok: false, error: '技能库读不了：' + (err instanceof Error ? err.message : String(err)) }; }
+          try { r = this.options.skills.call(e.name, e.args); } catch (err) { r = { ok: false, error: tr('技能库读不了：') + (err instanceof Error ? err.message : String(err)) }; }
           l.session.respondHostTool(e.id, r);
-          if (r.ok && e.name === 'use_skill') this.emit({ type: 'tool', ticketId: l.ticketId, name: '用技能 ' + String((e.args as { name?: unknown } | null)?.name ?? ''), args: null, phase: 'start' });
+          if (r.ok && e.name === 'use_skill') this.emit({ type: 'tool', ticketId: l.ticketId, name: tr('用技能 ') + String((e.args as { name?: unknown } | null)?.name ?? ''), args: null, phase: 'start' });
           return;
         }
-        if (e.name !== REPORT_TOOL.name) { l.session.respondHostTool(e.id, { ok: false, error: '没有这个工具：' + e.name }); return; }
-        if (l.reported) { l.session.respondHostTool(e.id, { ok: false, error: '这次派工已经交过报告了。' }); return; }
+        if (e.name !== REPORT_TOOL.name) { l.session.respondHostTool(e.id, { ok: false, error: tr('没有这个工具：') + e.name }); return; }
+        if (l.reported) { l.session.respondHostTool(e.id, { ok: false, error: tr('这次派工已经交过报告了。') }); return; }
         try {
           const state = this.scheduler.reportReceived(l.assignmentId, e.args);
           l.reported = true;
-          l.session.respondHostTool(e.id, { ok: true, text: '报告收到。这一轮可以结束了。' });
+          l.session.respondHostTool(e.id, { ok: true, text: tr('报告收到。这一轮可以结束了。') });
           this.emit({ type: 'reported', ticketId: l.ticketId, report: this.scheduler.latestReport(l.ticketId)!, state });
         } catch (err) {
           const code = err instanceof Error ? err.message : String(err);
@@ -267,7 +282,7 @@ export class Dispatcher {
           this.emit({ type: 'quota', ticketId: l.ticketId, resetsAt: quota.resetsAt });
           return this.finish(l, 'exited');
         }
-        this.scheduler.assignmentExited(l.assignmentId, e.status === 'error' ? '出错：' + (e.detail ?? '') : '两次停下都没交报告');
+        this.scheduler.assignmentExited(l.assignmentId, e.status === 'error' ? tr('出错：') + (e.detail ?? '') : tr('两次停下都没交报告'));
         return this.finish(l, 'exited');
       }
       case 'exited': {

@@ -150,7 +150,7 @@ export function availability(p: RegistryPaths, agent: RegistryAgent, key = platf
   return { state: 'unsupported', reason: agent.distribution.uvx ? 'needs Python (uv), which the app does not install' : `no download for ${key}` };
 }
 
-function run(command: string, args: string[], cwd: string, env?: Record<string, string>): Promise<void> {
+export function run(command: string, args: string[], cwd: string, env?: Record<string, string>): Promise<void> {
   return new Promise((resolve, reject) => {
     const viaShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
     const child = spawn(viaShell ? `"${command}"` : command, args, { cwd, env: { ...process.env, ...(env ?? {}) }, windowsHide: true, shell: viaShell, stdio: ['ignore', 'ignore', 'pipe'] });

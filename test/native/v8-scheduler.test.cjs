@@ -225,7 +225,7 @@ test('review rework goes ahead of the queue but never takes the emergency slot',
   assert.deepEqual(first.map(l => [l.ticketId, l.slotId]), [[a, 'slot-1']]);
   s.reportReceived(first[0].assignmentId, done);
   const m = s.pendingReviews()[0].reportMessageId;
-  assert.equal(s.recordReview(m, { verdict: 'fail', reason: '没跑测试', checks: [{ label: '有验证输出吗', ok: false, detail: '没有' }] }), 'rejected');
+  assert.equal(s.recordReview(m, { verdict: 'fail', reason: '没跑测试', checks: [{ label: '对上原话了吗', ok: true, detail: '对上了' }, { label: '有验证结果吗', ok: false, detail: '没有' }, { label: '有没有多改', ok: true, detail: '没有' }] }), 'rejected');
   // The rework goes before b, into the normal slot; b still waits, and the emergency slot stays free for the boss.
   assert.deepEqual(s.nextLaunches().map(l => [l.ticketId, l.slotId]), [[a, 'slot-1']]);
   assert.equal(s.state(b), 'QUEUED');

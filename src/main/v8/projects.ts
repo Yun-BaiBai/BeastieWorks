@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
@@ -31,7 +32,7 @@ export function projectStateDir(base: string, root: string | null, now = Date.no
   mkdirSync(dir, { recursive: true });
   const file = join(dir, 'project.json');
   if (!existsSync(file)) {
-    const record: Omit<ProjectRecord, 'dir'> = { key, root: root ? resolve(root) : null, name: root ? basename(resolve(root)) : '演示项目', createdAt: now };
+    const record: Omit<ProjectRecord, 'dir'> = { key, root: root ? resolve(root) : null, name: root ? basename(resolve(root)) : tr('演示项目'), createdAt: now };
     writeFileSync(file, JSON.stringify(record, null, 2));
   }
   return dir;

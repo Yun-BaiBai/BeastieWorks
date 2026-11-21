@@ -1,0 +1,96 @@
+# B5: build the Windows installer on GitHub's own Windows machines, so SignPath can sign it.
+#
+# SignPath Foundation (free code signing for open-source projects) signs only files built automatically from this
+# repository on GitHub-hosted runners, and checks that the file came from this workflow. Until the project is approved
+# and the repository variables below are set, the signing step is skipped and the unsigned installer is kept.
+#
+# Nothing is published from here: the installer is left as a workflow artifact, and the boss decides when to make a
+# release (老板的规矩: pushes and releases are public, ask each time).
+#
+# Repository settings once SignPath approves (Settings → Secrets and variables → Actions):
+#   variables: SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG, SIGNPATH_SIGNING_POLICY_SLUG
+#   secret:    SIGNPATH_API_TOKEN
+name: Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      MAGPIE_URL: https://github.com/yetone/magpie/releases/download/v0.1.1336/magpie-cli-windows-amd64.exe
+      MINGIT_URL: https://github.com/git-for-windows/git/releases/download/v2.56.1.windows.1/MinGit-2.56.1-64-bit.zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      # The programs that ship with the app. tools/prepare-*.cjs check each against its pinned sha256 and stop on any
+      # difference, so what goes into the installer is exactly the published release.
+      - name: Fetch Magpie and MinGit
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force downloads | Out-Null
+          Invoke-WebRequest $env:MAGPIE_URL -OutFile downloads/magpie-v0.1.1336.exe
+          Invoke-WebRequest $env:MINGIT_URL -OutFile downloads/MinGit-2.56.1-64-bit.zip
+          "BEASTIE_MAGPIE_EXE=$PWD\downloads\magpie-v0.1.1336.exe" >> $env:GITHUB_ENV
+          "BEASTIE_MINGIT_ZIP=$PWD\downloads\MinGit-2.56.1-64-bit.zip" >> $env:GITHUB_ENV
+
+      # Every automatic test must pass before anything is packaged (C3 review, finding 17). They run under the app's own
+      # Electron, call no model, and use the Magpie fetched above for the gateway tests.
+      - name: Test
+        shell: pwsh
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          $env:AGENTCORP_TEST_MAGPIE_EXE = $env:BEASTIE_MAGPIE_EXE
+          $tests = Get-ChildItem test -Recurse -Filter *.test.cjs | ForEach-Object { $_.FullName }
+          & node_modules/electron/dist/electron.exe --test $tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build the installer
+        run: npm run dist:win -- --publish never
+
+      - name: Keep the unsigned installer
+        id: upload-unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-unsigned
+          path: dist/Beastie-Works-*-win-x64-setup.exe
+          if-no-files-found: error
+
+      # Each release is approved by hand in SignPath before it is signed (SignPath's rule).
+      - name: Sign with SignPath
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Keep the signed installer
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-signed
+          path: signed
+          if-no-files-found: error

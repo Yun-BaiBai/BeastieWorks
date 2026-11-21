@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n';
 import type { SlotConfig, TicketView } from './tickets';
 
 /**
@@ -6,7 +7,8 @@ import type { SlotConfig, TicketView } from './tickets';
  */
 
 /** The five steps a slot card shows, in order. */
-export const WORK_STEPS = ['摸底', '找原因', '改代码', '验证', '交报告'] as const;
+/** The same five steps for any kind of work (A7): code, writing, pictures, video. */
+export const WORK_STEPS = [tr('摸底'), tr('想做法'), tr('动手'), tr('验证'), tr('交报告')] as const;
 
 export interface BoardSlot {
   slot: SlotConfig;
@@ -57,8 +59,8 @@ export type CostSure = 'exact' | 'estimated' | 'partial';
 /** The figure as the boss reads it: "$0.12", "约 $0.12", "至少 $0.12", or "未知". */
 export function moneyText(usd: number, sure: CostSure): string {
   const n = '$' + usd.toFixed(usd > 0 && usd < 0.1 ? 3 : 2);
-  if (sure === 'partial') return usd > 0 ? '至少 ' + n : '未知';
-  return sure === 'estimated' ? '约 ' + n : n;
+  if (sure === 'partial') return usd > 0 ? tr('至少 ') + n : tr('未知');
+  return sure === 'estimated' ? tr('约 ') + n : n;
 }
 
 /** The least sure of several. */
@@ -76,7 +78,7 @@ export interface BoardData {
   /** The lead's name, as the boss set it (requirement 26). */
   leadName: string;
   /** The agent harness the gremlins run in: oh-my-pi with a real model, or the demo cast. */
-  harness: { kind: 'omp' | 'fake' | 'acp'; label: string };
+  harness: { kind: 'fake' | 'acp'; label: string };
   /** Which model the lead and the reviewer run on (null: the harness default). Slots carry their own. */
   agents: { lead: string | null; review: string | null };
   now: number;
@@ -96,6 +98,30 @@ export interface BoardData {
   done: number;
   spentTodayUsd: number;
   spentSure: CostSure;
+  /** 圆桌会议 still going or waiting for the boss's pick (A6). */
+  roundtables: RoundtableView[];
+  /** 工序链 (A15) still going. */
+  chains: ChainView[];
+  /** 拆解 (A12) being worked out or waiting for the boss. */
+  splits: SplitView[];
+}
+
+/** One of the two plans the lead sorted the proposals into. */
+export interface RoundtablePlan { title: string; summary: string; from?: string }
+
+/**
+ * 圆桌会议 (A6): proposing (agents writing, each on its own), merging (the lead sorting them into Plan A / B),
+ * choosing (the boss picks), then picked or failed.
+ */
+export interface RoundtableView {
+  id: number;
+  title: string;
+  request: string;
+  state: 'proposing' | 'merging' | 'choosing' | 'picked' | 'failed';
+  messageId: number;
+  createdAt: number;
+  proposals: Array<{ agent: string; ok: boolean; title: string | null; why: string | null }>;
+  plans?: { a: RoundtablePlan; b: RoundtablePlan; recommended: 'A' | 'B'; note: string };
 }
 
 // ---------- local pages (F3) ----------
@@ -149,7 +175,8 @@ export interface LedgerDetail {
   totalUsd: number;
   totalSure: CostSure;
   /** Gremlins doing the work, the lead talking, the reviewer checking. */
-  bySource: { gremlins: number; lead: number; review: number };
+  /** other: the roster page's chats and skill retelling, outside any ticket. */
+  bySource: { gremlins: number; lead: number; review: number; other: number };
   byTicket: Array<{ id: number; title: string; state: import('./tickets').TicketState; costUsd: number; elapsedMs: number }>;
   /** Hard cap per session, if any, so the jar can show how full "full" is. */
   capUsd: number | null;
@@ -160,3 +187,28 @@ export interface ArchiveItem { id: number; title: string; originalRequest: strin
 
 /** 时间线: one ticket's story, oldest first. */
 export interface TimelineItem { id: string; at: number | null; who: 'boss' | 'lead' | 'gremlin' | 'review' | 'system'; kind: string; text: string }
+
+/** One 工序链 (A15): stages done one after another, each an ordinary ticket. */
+export interface ChainView {
+  id: number;
+  title: string;
+  /** The boss's words, whole. */
+  request: string;
+  stages: Array<{ title: string; what: string; ticketId: number | null; state: import('./tickets').TicketState | null }>;
+  /** The stage the boss may start now (the one before it was accepted), or null. */
+  next: number | null;
+  finished: boolean;
+}
+
+/** One 拆解 (A12): a big job and the pieces a gremlin proposes, for the boss to approve. */
+export interface SplitView {
+  id: number;
+  title: string;
+  request: string;
+  state: 'splitting' | 'choosing' | 'started';
+  /** The agent that worked out the split. */
+  by: string;
+  canSplit: boolean;
+  why: string;
+  pieces: Array<{ title: string; what: string }>;
+}

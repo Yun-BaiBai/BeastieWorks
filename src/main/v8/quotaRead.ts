@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -44,12 +45,12 @@ export function claudeWindows(data: Json): QuotaWindow[] {
     const used = num(x?.utilization) ?? num(x?.used_percentage);
     if (used !== null) out.push({ label, usedPercent: pct(used), resetsAt: resetTime(x?.resets_at) });
   };
-  add('5 小时', data.five_hour);
-  add('本周', data.seven_day);
+  add(tr('5 小时'), data.five_hour);
+  add(tr('本周'), data.seven_day);
   // Weekly limits of one model, where the plan has them.
   for (const l of Array.isArray(data.limits) ? data.limits as Json[] : []) {
     const name = ((l?.scope as Json | null)?.model as Json | null)?.display_name;
-    if (l?.kind === 'weekly_scoped' && typeof name === 'string' && num(l.percent) !== null) out.push({ label: '本周 · ' + name, usedPercent: pct(num(l.percent)!), resetsAt: resetTime(l.resets_at) });
+    if (l?.kind === 'weekly_scoped' && typeof name === 'string' && num(l.percent) !== null) out.push({ label: tr('本周 · ') + name, usedPercent: pct(num(l.percent)!), resetsAt: resetTime(l.resets_at) });
   }
   return out;
 }
@@ -60,10 +61,10 @@ export async function readClaudeQuota(configDir: string, fetchImpl: typeof fetch
   try {
     oauth = ((JSON.parse(readFileSync(path.join(configDir, '.credentials.json'), 'utf8')) as Json).claudeAiOauth ?? {}) as Json;
   } catch {
-    return result(id, 'error', { note: '还没登录 Claude，登录后才读得到额度。' });
+    return result(id, 'error', { note: tr('还没登录 Claude，登录后才读得到额度。') });
   }
   const token = typeof oauth.accessToken === 'string' ? oauth.accessToken : '';
-  if (!token) return result(id, 'error', { note: '还没登录 Claude，登录后才读得到额度。' });
+  if (!token) return result(id, 'error', { note: tr('还没登录 Claude，登录后才读得到额度。') });
   const plan = typeof oauth.subscriptionType === 'string' ? oauth.subscriptionType : null;
   let r: Response;
   try {
@@ -72,16 +73,16 @@ export async function readClaudeQuota(configDir: string, fetchImpl: typeof fetch
       signal: AbortSignal.timeout(10_000),
     });
   } catch {
-    return result(id, 'error', { plan, note: '连不上 Claude 的额度页，稍后再试。' });
+    return result(id, 'error', { plan, note: tr('连不上 Claude 的额度页，稍后再试。') });
   }
   if (r.status === 401) {
     const refreshable = typeof oauth.refreshToken === 'string' && (num(oauth.refreshTokenExpiresAt) ?? Infinity) > Date.now();
-    return result(id, 'error', { plan, note: refreshable ? '登录凭证过期了。Claude 下次干活时会自己续上，之后就读得到。' : '登录过期了，要重新登录 Claude。' });
+    return result(id, 'error', { plan, note: refreshable ? tr('登录凭证过期了。Claude 下次干活时会自己续上，之后就读得到。') : tr('登录过期了，要重新登录 Claude。') });
   }
-  if (r.status === 429) return result(id, 'error', { plan, note: 'Claude 的额度页让稍后再查。' });
-  if (!r.ok) return result(id, 'error', { plan, note: `Claude 的额度页没给答案（${r.status}）。` });
+  if (r.status === 429) return result(id, 'error', { plan, note: tr('Claude 的额度页让稍后再查。') });
+  if (!r.ok) return result(id, 'error', { plan, note: tr('Claude 的额度页没给答案（{0}）。', [r.status]) });
   const windows = claudeWindows(await r.json() as Json);
-  return windows.length ? result(id, 'ok', { plan, windows }) : result(id, 'none', { plan, note: '这个账号没有按时间窗口算的额度。' });
+  return windows.length ? result(id, 'ok', { plan, windows }) : result(id, 'none', { plan, note: tr('这个账号没有按时间窗口算的额度。') });
 }
 
 /** Codex's `account/rateLimits/read` answer as quota windows. Windows are told apart by their length. */
@@ -91,9 +92,9 @@ export function codexWindows(limits: Json | null | undefined): QuotaWindow[] {
     const used = num(w?.usedPercent);
     if (used === null) continue;
     const mins = num(w?.windowDurationMins);
-    const label = mins !== null && Math.abs(mins - SESSION_MIN) <= 1 ? '5 小时'
-      : mins !== null && Math.abs(mins - WEEK_MIN) <= 1 ? '本周'
-      : mins !== null ? `${Math.round(mins / 60)} 小时` : out.length ? '本周' : '5 小时';
+    const label = mins !== null && Math.abs(mins - SESSION_MIN) <= 1 ? tr('5 小时')
+      : mins !== null && Math.abs(mins - WEEK_MIN) <= 1 ? tr('本周')
+      : mins !== null ? tr('{0} 小时', [Math.round(mins / 60)]) : out.length ? tr('本周') : tr('5 小时');
     out.push({ label, usedPercent: pct(used), resetsAt: resetTime(w?.resetsAt) });
   }
   return out;
@@ -108,7 +109,7 @@ export function readCodexQuota(command: string, env: NodeJS.ProcessEnv, timeoutM
       child = spawn(command, ['-c', 'approval_policy=never', '-c', 'features.plugins=false', '-s', 'read-only', '-a', 'never', 'app-server'],
         { env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch {
-      resolve(result(id, 'error', { note: '开不了 Codex 程序。' }));
+      resolve(result(id, 'error', { note: tr('开不了 Codex 程序。') }));
       return;
     }
     let done = false, buf = '';
@@ -119,10 +120,10 @@ export function readCodexQuota(command: string, env: NodeJS.ProcessEnv, timeoutM
       if (child.pid) hardKillTree(child.pid); else try { child.kill(); } catch { /* gone */ }
       resolve(q);
     };
-    const timer = setTimeout(() => end(result(id, 'error', { note: 'Codex 没在 20 秒内回答。' })), timeoutMs);
+    const timer = setTimeout(() => end(result(id, 'error', { note: tr('Codex 没在 20 秒内回答。') })), timeoutMs);
     const send = (m: Json) => { try { child.stdin!.write(JSON.stringify({ jsonrpc: '2.0', ...m }) + '\n'); } catch { /* closed */ } };
-    child.on('error', () => end(result(id, 'error', { note: '开不了 Codex 程序。' })));
-    child.on('exit', () => end(result(id, 'error', { note: 'Codex 程序还没回答就退出了。' })));
+    child.on('error', () => end(result(id, 'error', { note: tr('开不了 Codex 程序。') })));
+    child.on('exit', () => end(result(id, 'error', { note: tr('Codex 程序还没回答就退出了。') })));
     child.stderr!.resume();
     child.stdout!.on('data', d => {
       buf += String(d);
@@ -136,13 +137,13 @@ export function readCodexQuota(command: string, env: NodeJS.ProcessEnv, timeoutM
         else if (m.id === 2) {
           if (m.error) {
             const msg = String((m.error as Json).message ?? '');
-            end(result(id, 'error', { note: /api.?key/i.test(msg) ? 'Codex 用的是 API 密钥，没有订阅额度可读。' : /auth|login|sign/i.test(msg) ? '要重新登录 Codex。' : 'Codex 没给额度：' + msg.slice(0, 120) }));
+            end(result(id, 'error', { note: /api.?key/i.test(msg) ? tr('Codex 用的是 API 密钥，没有订阅额度可读。') : /auth|login|sign/i.test(msg) ? tr('要重新登录 Codex。') : tr('Codex 没给额度：') + msg.slice(0, 120) }));
             return;
           }
           const limits = ((m.result ?? {}) as Json).rateLimits as Json | null | undefined;
           const windows = codexWindows(limits);
           const plan = typeof limits?.planType === 'string' ? limits.planType : null;
-          end(windows.length ? result(id, 'ok', { plan, windows }) : result(id, 'none', { plan, note: '这个账号没有按时间窗口算的额度。' }));
+          end(windows.length ? result(id, 'ok', { plan, windows }) : result(id, 'none', { plan, note: tr('这个账号没有按时间窗口算的额度。') }));
         }
       }
     });
@@ -181,28 +182,28 @@ export const MAGPIE_PROVIDERS: Record<string, string[]> = {
 /** Magpie's window names in plain words. */
 export function windowLabel(name: string): string {
   const n = name.trim().toLowerCase();
-  if (/^5\s*h/.test(n) || n === '5 hours') return '5 小时';
-  if (/^(7\s*d|7 days|week)/.test(n)) return '本周';
-  if (/^(1\s*d|24\s*h|day|daily)/.test(n)) return '今天';
-  if (/^(30\s*d|month)/.test(n)) return '本月';
-  return name || '额度';
+  if (/^5\s*h/.test(n) || n === '5 hours') return tr('5 小时');
+  if (/^(7\s*d|7 days|week)/.test(n)) return tr('本周');
+  if (/^(1\s*d|24\s*h|day|daily)/.test(n)) return tr('今天');
+  if (/^(30\s*d|month)/.test(n)) return tr('本月');
+  return name || tr('额度');
 }
 
 /** An agent's quota from Magpie's accounts: every window of every matching account; a broken one says so. */
 export function quotaFromMagpie(agentId: string, accounts: MagpieQuota[]): AgentQuota {
   const words = MAGPIE_PROVIDERS[agentId];
   const mine = words ? accounts.filter(a => words.some(w => a.provider.toLowerCase().includes(w))) : [];
-  if (!mine.length) return result(agentId, 'none', { note: '这家的额度还读不到。' });
+  if (!mine.length) return result(agentId, 'none', { note: tr('这家的额度还读不到。') });
   const ok = mine.filter(a => !a.error && a.windows.length);
   if (!ok.length) {
     // Magpie's errors can run to a paragraph (Gemini's is several sentences): the first sentence is enough here.
-    const why = (mine.find(a => a.error)?.error ?? '没有额度数据').split(/(?<=\.)\s/)[0].slice(0, 120);
-    return result(agentId, 'error', { note: '读额度时出错了：' + why });
+    const why = (mine.find(a => a.error)?.error ?? tr('没有额度数据')).split(/(?<=\.)\s/)[0].slice(0, 120);
+    return result(agentId, 'error', { note: tr('读额度时出错了：') + why });
   }
   return result(agentId, 'ok', {
     plan: ok[0].plan,
     windows: ok.flatMap(a => a.windows.map(w => ({ label: windowLabel(w.name) + (ok.length > 1 ? ' · ' + a.provider : ''), usedPercent: w.usedPercent, resetsAt: w.resetsAt }))),
-    note: '经自带的 Magpie 读到。',
+    note: tr('经自带的 Magpie 读到。'),
   });
 }
 
@@ -216,7 +217,7 @@ export class QuotaBook {
     const keep = this.deps.keepMs ?? 60_000;
     const was = this.kept.get(agentId);
     if (was && !fresh && Date.now() - (this.at.get(agentId) ?? 0) < keep) return was;
-    const next = this.readNow(agentId).catch(() => result(agentId, 'error', { note: '读额度时出错了。' }));
+    const next = this.readNow(agentId).catch(() => result(agentId, 'error', { note: tr('读额度时出错了。') }));
     this.kept.set(agentId, next);
     this.at.set(agentId, Date.now());
     return next;
@@ -226,9 +227,9 @@ export class QuotaBook {
     if (agentId === 'claude-acp') return readClaudeQuota(this.deps.claudeHome());
     if (agentId === 'codex-acp') {
       const c = await this.deps.codex();
-      return c ? readCodexQuota(c.command, c.env) : result(agentId, 'error', { note: '这台电脑上没找到 Codex。' });
+      return c ? readCodexQuota(c.command, c.env) : result(agentId, 'error', { note: tr('这台电脑上没找到 Codex。') });
     }
     if (this.deps.magpieQuotas && MAGPIE_PROVIDERS[agentId]) return quotaFromMagpie(agentId, await this.deps.magpieQuotas());
-    return result(agentId, 'none', { note: '这家的额度还读不到。' });
+    return result(agentId, 'none', { note: tr('这家的额度还读不到。') });
   }
 }

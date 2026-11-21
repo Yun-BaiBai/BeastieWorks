@@ -1,3 +1,4 @@
+import { tr } from '@shared/i18n';
 import { useEffect, useRef, useState } from 'react';
 
 type Project = { key: string; root: string | null; name: string; createdAt: number; current: boolean; missing: boolean };
@@ -32,7 +33,7 @@ export function ProjectSwitcher({ name, working, onSwitched }: { name: string; w
       await window.cth.updateConfig({ v8: { ...(c.v8 ?? {}), projectRoot: root ?? undefined } });
       setOpen(false); setConfirm(null);
       onSwitched();
-    } catch { setProblem('没切过去，再试一次。'); }
+    } catch { setProblem(tr('没切过去，再试一次。')); }
     finally { setBusy(false); }
   };
   const pick = (root: string | null, label: string) => { if (working > 0) setConfirm({ root, name: label }); else void go(root); };
@@ -44,25 +45,25 @@ export function ProjectSwitcher({ name, working, onSwitched }: { name: string; w
 
   return <div className="v8-proj" ref={box}>
     <button type="button" className="v8-crumb v8-proj-btn" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(o => !o)}>
-      小怪工坊<span>/</span>{name}<i aria-hidden="true">▾</i>
+      {tr('小怪工坊')}<span>/</span>{name}<i aria-hidden="true">▾</i>
     </button>
-    {open && <div className="v8-proj-menu v8-sticker" role="dialog" aria-label="切换项目">
+    {open && <div className="v8-proj-menu v8-sticker" role="dialog" aria-label={tr('切换项目')}>
       {confirm ? <div className="v8-proj-confirm">
-        <p>工位上还有 {working} 张在干活。切到「{confirm.name}」后它们会先停下，回到这个项目时接着做。</p>
+        <p>{tr('工位上还有 ')}{working} {tr(' 张在干活。切到「')}{confirm.name}{tr('」后它们会先停下，回到这个项目时接着做。')}</p>
         <div className="v8-proj-acts">
-          <button type="button" className="v8-btn" disabled={busy} onClick={() => { void go(confirm.root); }}>切过去</button>
-          <button type="button" className="v8-proj-cancel" onClick={() => setConfirm(null)}>留在这里</button>
+          <button type="button" className="v8-btn" disabled={busy} onClick={() => { void go(confirm.root); }}>{tr('切过去')}</button>
+          <button type="button" className="v8-proj-cancel" onClick={() => setConfirm(null)}>{tr('留在这里')}</button>
         </div>
       </div> : <>
-        <span className="v8-cap">项目</span>
+        <span className="v8-cap">{tr('项目')}</span>
         <ul>{projects.map(p => <li key={p.key}>
           <button type="button" disabled={p.current || p.missing || busy} aria-current={p.current ? 'true' : undefined} onClick={() => pick(p.root, p.name)}>
             <b>{p.name}</b>
-            <small>{p.missing ? '文件夹找不到了' : p.root ?? '不改任何文件的演示'}</small>
-            {p.current && <em>当前</em>}
+            <small>{p.missing ? tr('文件夹找不到了') : p.root ?? tr('不改任何文件的演示')}</small>
+            {p.current && <em>{tr('当前')}</em>}
           </button>
         </li>)}</ul>
-        <button type="button" className="v8-proj-open" disabled={busy} onClick={() => { void choose(); }}>＋ 打开别的文件夹…</button>
+        <button type="button" className="v8-proj-open" disabled={busy} onClick={() => { void choose(); }}>{tr('＋ 打开别的文件夹…')}</button>
         {problem && <p className="v8-proj-problem" role="alert">{problem}</p>}
       </>}
     </div>}

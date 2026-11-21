@@ -35,7 +35,6 @@ export interface SessionSpec {
   builtinTools: boolean;
   /** The supply layer's session mark (X-Magpie-Session): keeps this session on one account and bills it to its
    *  ticket. Unset when no gateway is in front. */
-  supplySession?: string;
   /** Pin this session to one gateway account (X-Magpie-Account), when the boss switched the ticket's account. */
   supplyAccount?: string;
 }

@@ -77,3 +77,6 @@
 :root[data-cth-theme=dark] .v8 .v8m-role { background: var(--amber); color: #15120f; }
 .v8m-badge small { font: 500 11.5px/1.4 var(--text); color: var(--ink2); min-height: 32px; }
 .v8m-model { display: inline-flex; align-items: center; gap: 6px; font: 600 10.5px var(--mono); color: var(--ink3); }
+
+/* Every record reachable: with all shown, the folders scroll (C3 review, finding 19). */
+.v8m-folders { overflow-y: auto; }

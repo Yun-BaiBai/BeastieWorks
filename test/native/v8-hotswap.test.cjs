@@ -2,19 +2,17 @@
 // v8 S2: the ticket-level line of defence. Quota refusals that Magpie could not absorb put a ticket in 等额度 instead
 // of failing it; it goes on when the quota is back, or when the boss switches account or model. The three-state probe
 // warns on silence and stops a gremlin past the hard limit. Closing a harness takes its whole process tree with it.
-// No model, no account: fake shells and the fake omp. Runs under the pinned Electron with ELECTRON_RUN_AS_NODE=1.
+// No model, no account: fake shells. Runs under the pinned Electron with ELECTRON_RUN_AS_NODE=1.
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const Database = require('better-sqlite3'), load = require('../load-ts.cjs');
 const { Scheduler } = load('src/main/v8/scheduler.ts');
 const { Dispatcher } = load('src/main/v8/dispatcher.ts');
 const { FakeShell } = load('src/main/v8/fakeShell.ts');
-const { OmpShell } = load('src/main/v8/ompShell.ts');
 const { V8Workbench } = load('src/main/v8/workbench.ts');
 const { quotaRefusal, probeLive } = load('src/main/v8/hotswap.ts');
 const { isAlive } = load('src/main/procKill.ts');
 
-const FAKE = path.join(__dirname, '..', 'fixtures', 'fake-omp-rpc.cjs');
 const done = { kind: 'done', summary: '改好了', changed: ['a.txt'], verification: { command: 'node -e 0', output: 'ok' } };
 const LATER = 2_000_000_000;          // unix seconds, far ahead
 
@@ -174,18 +172,4 @@ test('workbench: a ticket waiting for quota goes on by itself once the reset tim
   assert.equal(await b.checkQuota(), 1);
   await until(() => b.scheduler.state(ticket.id) === 'REVIEW', 'the ticket to go on and finish');
   assert.equal(specs.length, 2);
-});
-
-test('closing an omp session also ends what omp started', async t => {
-  const sc = scope(t), home = sc.tmp('v8-hotswap-tree-');
-  const log = path.join(home, 'omp.log');
-  const shell = new OmpShell({ exe: process.execPath, prefixArgs: [FAKE], agentDir: path.join(home, 'agent'), sessionDir: path.join(home, 's'), env: { FAKE_OMP_LOG: log, ELECTRON_RUN_AS_NODE: '1' } });
-  const session = await shell.open({ role: 'worker', cwd: home, model: null, sessionRef: null, systemPrompt: 'x', hostTools: [], builtinTools: true });
-  session.prompt('孙进程');
-  let gc = 0;
-  await until(() => { try { gc = fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)).find(r => r.grandchild)?.grandchild ?? 0; } catch { gc = 0; } return gc > 0; }, 'the grandchild to start');
-  sc.defer(() => { try { process.kill(gc); } catch { /* gone */ } });
-  assert.equal(isAlive(gc), true);
-  await session.close();
-  await until(() => !isAlive(gc), 'the grandchild to be gone', 10000);
 });

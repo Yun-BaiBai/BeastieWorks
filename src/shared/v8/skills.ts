@@ -17,10 +17,29 @@ export interface LibrarySkill {
   imported: boolean;
   /** Where an imported skill came from (github.com/owner/repo/path). */
   source: string | null;
+  /** Ships with the app, or comes with ego lite (A5). These start switched on. */
+  builtin: boolean;
 }
 
 export interface SkillLibraryView {
   /** The folders the skills were read from. */
   roots: string[];
   skills: LibrarySkill[];
+  /** The tools behind the skills that ship with the app. */
+  tools?: SkillToolView[];
+}
+
+/** The command-line tool behind one of the skills that ship with the app (A5). */
+export interface SkillToolView {
+  /** The skill it belongs to. */
+  skill: string;
+  command: string;
+  /**
+   * installed: in the app's own folder (version given); on_computer: already on this computer, used as it is;
+   * ready: nothing to install (find-skills runs through npx); not_installed: one click installs it;
+   * needs_uv: agent-reach installs with uv, which this computer lacks; missing_basics: no npx at all.
+   */
+  state: 'installed' | 'on_computer' | 'ready' | 'not_installed' | 'needs_uv' | 'missing_basics';
+  version: string | null;
+  note: string | null;
 }

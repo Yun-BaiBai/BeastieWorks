@@ -1,4 +1,7 @@
 import type { HostTool } from './shell';
+import { OPEN_ROUNDTABLE_TOOL, PLANS_TOOL } from './roundtable';
+import { OPEN_CHAIN_TOOL } from './chains';
+import { OPEN_SPLIT_TOOL } from './splits';
 import type { DoneReport, QuestionReport, Report, TicketView } from '../../shared/v8/tickets';
 
 /**
@@ -18,7 +21,7 @@ export const REPORT_TOOL: HostTool = {
       summary: { type: 'string', description: 'done：改了什么，一两句话' },
       changed: { type: 'array', items: { type: 'string' }, description: 'done：动过的文件，相对工作目录' },
       verification: {
-        type: 'object', description: 'done：怎么验证的。必须是真的运行结果',
+        type: 'object', description: 'done：你这次真做过的验证。command 写怎么验证的（跑了哪条命令，或做了什么检查），output 原样写验证结果。按活的种类：代码跑测试或构建；文字数字数、对照要求逐条核对；图片音视频看时长和格式（如 ffprobe）或截图。只写“没问题”不算',
         properties: { command: { type: 'string' }, output: { type: 'string' } }, required: ['command', 'output'],
       },
       question: { type: 'string', description: 'question：一个具体问题' },
@@ -37,10 +40,10 @@ export const WORKER_SYSTEM = [
   '规矩：',
   '1. 只在当前工作目录里读写和运行命令。',
   '2. 每次停下来，都调用 submit_report 交一份报告，只交一份。',
-  '3. 交 done 之前，必须真的运行过验证（测试、构建或能证明结果的命令），把命令和输出原样写进 verification。没法验证就交 blocked，不要交 done。',
+  '3. 交 done 之前，必须真的验证过，把怎么验证的和验证结果原样写进 verification。按活的种类验证：代码跑测试或构建；文字数字数、对照老板的要求逐条核对；图片音视频看时长、格式或截图。没法验证就交 blocked，不要交 done。',
   '4. 需要老板决定的事，交 question：只问一个具体问题，给出选项和你的推荐。',
   '5. 不联系别人，不推送，不装新依赖；需要时交 question 说明原因。',
-  '6. 每个写文件和运行命令都要审批。只在工作目录里读写、跑测试和构建、本地 git 会被允许；删除、安装、联网、碰目录外的路径会被拒绝。一条命令被拒，只说明那一条越界了，不是命令都不能跑：换一条更简单、只在目录里的命令再试。直接跑测试命令（比如 python test_x.py、npm test）也被拒，才交 blocked。',
+  '6. 每个写文件和运行命令都要审批。只在工作目录里读写、跑测试和构建、看文件信息（字数、ffprobe 看音视频）、本地 git 会被允许；删除、安装、联网、碰目录外的路径会被拒绝。一条命令被拒，只说明那一条越界了，不是命令都不能跑：换一条更简单、只在目录里的命令再试。直接跑测试命令（比如 python test_x.py、npm test）也被拒，才交 blocked。',
 ].join('\n');
 
 export function workerBrief(t: Pick<TicketView, 'id' | 'originalRequest' | 'routingNote'>, o: { recovery: boolean; riders: string[] }): string {
@@ -66,7 +69,7 @@ export function workerFollowUp(o: { recovery: boolean; riders: string[]; retry: 
 export const REPORT_NUDGE = '你这一轮停下来了，但没有调用 submit_report。现在交一份报告：做完了、有问题要问、卡住、失败，或者不用做。';
 
 export function reportRefused(code: string): string {
-  if (code === 'V8_DONE_NEEDS_VERIFICATION') return '报告被退回：done 必须附真实的验证命令和输出。先运行验证再交；没法验证就交 blocked。';
+  if (code === 'V8_DONE_NEEDS_VERIFICATION') return '报告被退回：done 必须附真实的验证：怎么验证的，和验证结果原样。先验证再交；没法验证就交 blocked。';
   return '报告被退回：格式不对（' + code + '）。按 submit_report 的说明重交。';
 }
 
@@ -81,6 +84,9 @@ export const LEAD_SYSTEM = [
   '3. 只有老板明确要求时才 stop_ticket。老板要某张排队的工单先做，用 move_to_front；list_tickets 会写出排队第几。',
   '4. 小怪有问题，用 ask_boss 原样转给老板。小怪做完了、卡住了、失败了，用 reply_to_boss 一两句话告诉老板。',
   '5. 平时不主动说话。每一轮尽快结束，结果会以新消息的形式来找你。',
+  '6. 老板要的是“出方案”“想几个办法”“比比怎么做”，而不是直接动手，就用 open_roundtable 开圆桌，不开工单：几只小怪会各自独立出方案。方案到了会有消息来找你，照消息说的用 submit_plans 整理成 Plan A / Plan B，不替老板选。',
+  '7. 老板要一件大活分几道工序先后做（上一道做完下一道才能做，比如剪辑 → 配音 → 特效），就用 open_chain 开工序链，按老板的说法列出各道，不开普通工单：第一道马上开工，后面每道等老板点“开下一道”。能同时做的几件事不是工序链，照常开工单。',
+  '8. 默认一件事开一张工单，由一只小怪做完，不拆。只有活大到要干很久（不是几分钟、十几分钟的事），而且能拆成几件互不相干、可以同时做的部分时，才用 open_split 先开拆解：一只小怪出拆法，老板点头才开工。老板明说要拆，也用 open_split，值不值得拆由出拆法的小怪判断。小活一律照常开工单：拆开要多读几遍项目、多审几次，小活拆了只会更慢更贵。',
 ].join('\n');
 
 const id = (description: string) => ({ type: 'integer', description });
@@ -104,6 +110,10 @@ export const LEAD_TOOLS: HostTool[] = [
   },
   { name: 'reply_to_boss', description: '回老板一两句话。', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
   { name: 'ask_boss', description: '把某张工单里小怪的问题原样转给老板。', parameters: { type: 'object', properties: { ticket_id: id('工单编号') }, required: ['ticket_id'] } },
+  OPEN_ROUNDTABLE_TOOL,
+  OPEN_CHAIN_TOOL,
+  OPEN_SPLIT_TOOL,
+  PLANS_TOOL,
 ];
 
 export const bossToLead = (messageId: number, text: string) => `老板（消息 #${messageId}）：${text}`;
@@ -129,7 +139,7 @@ export function questionForBoss(t: Pick<TicketView, 'id' | 'title'>, q: Question
 
 export const REVIEW_TOOL: HostTool = {
   name: 'submit_review',
-  description: '交审查结论。verdict 只能是 pass 或 fail；checks 必须包含三条：对上原话了吗、有验证输出吗、有没有多改。',
+  description: '交审查结论。verdict 只能是 pass 或 fail；checks 必须包含三条：对上原话了吗、有验证结果吗、有没有多改。',
   parameters: {
     type: 'object',
     properties: {
@@ -146,10 +156,10 @@ export const REVIEW_TOOL: HostTool = {
 
 export const REVIEW_SYSTEM = [
   '你是小怪工坊的审查小怪。你看不到干活小怪的对话，也没有读文件、跑命令的工具。',
-  '你只拿到三样东西：老板的原话、改动（diff）、小怪交的验证命令和输出。只根据这三样判断。',
+  '你只拿到三样东西：老板的原话、改动（diff）、小怪交的验证（怎么验证的和验证结果）。只根据这三样判断。',
   '逐条检查：',
   '1. 对上原话了吗：改动是不是在做老板要的事，有没有漏掉老板明确说的要求。',
-  '2. 有验证输出吗：验证输出是不是真的跑出来的、能证明改对了；只说“通过了”但没有输出不算。',
+  '2. 有验证结果吗：验证结果是不是这次真做出来的、能证明做对了。不一定是命令：代码看测试或构建的输出，文字看字数、对照要求逐条核对的结果，图片音视频看时长、格式检查的结果或截图。只说“没问题”、拿不出结果的不算。',
   '3. 有没有多改：有没有动和这件事无关的文件或代码。',
   '三条都对才 pass。任何一条不对就 fail，reason 写清楚要怎么改。',
   '调用 submit_review 交结论，只交一次，然后结束。',
@@ -161,7 +171,7 @@ export function reviewBrief(o: { originalRequest: string; bossLater: string[]; s
     ...(o.bossLater.length ? ['', '老板后来又说：', ...o.bossLater.map(b => '- ' + b)] : []),
     '', '小怪说它做了：' + o.summary,
     '', '改动：', o.diff.trim() ? o.diff : '（工作目录里没有改动）',
-    '', '验证命令：' + o.verification.command, '验证输出：', o.verification.output,
+    '', '怎么验证的：' + o.verification.command, '验证结果：', o.verification.output,
   ].join('\n');
 }
 

@@ -1,5 +1,6 @@
+import { tr } from '../../shared/i18n';
 import { homedir } from 'node:os';
-import { BrowserWindow, dialog, type IpcMain } from 'electron';
+import { BrowserWindow, dialog, shell, type IpcMain } from 'electron';
 import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { V8Settings } from '../../shared/v8/settings';
@@ -22,6 +23,8 @@ import { MagpieService, magpieExe } from './magpieService';
 import { outsideAsar } from './hostToolBridge';
 import { dirname } from 'node:path';
 import { retellPrompt, SkillLibrary } from './skillLibrary';
+import { SkillTools } from './skillTools';
+import { DEVICE_SPECS, DeviceLogin, deviceCli } from './deviceLogin';
 
 /**
  * The renderer's way into the v8 workbench. Nothing starts until the window actually calls in. Each project has its own workbench folder; changing the
@@ -34,6 +37,8 @@ let chats: AgentChats | null = null;
 let claudeLogin: ClaudeLogin | null = null;
 let codexLogin: CodexLogin | null = null;
 let antigravityLogin: AntigravityLogin | null = null;
+/** A9's sign-ins in progress (Grok, Kimi, Cursor), cancelled when the app quits. */
+const deviceLoginsOpen = new Map<string, DeviceLogin>();
 let magpie: MagpieService | null = null;
 
 function push(): void {
@@ -83,7 +88,22 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
     roots: () => deps.settings()?.skillRoots ?? [join(homedir(), '.agents', 'skills'), join(homedir(), '.claude', 'skills')].filter(existsSync),
     stateFile: join(base, 'skill-library.json'),
     importRoot: join(base, 'skills-imported'),
+    // A5: the skills that ship with the app (resources/skills), and the ones ego lite brings when it is installed.
+    builtinRoots: () => {
+      // Installed: next to the app (resources/skills); while developing: the app's source folder.
+      const shipped = [join(process.resourcesPath ?? '', 'skills'), join(__dirname, '..', '..', 'resources', 'skills')].find(d => existsSync(d));
+      const ego = join(homedir(), '.local', 'share', 'ego', 'ego-skills');
+      return [...(shipped ? [shipped] : []), ...(existsSync(ego) ? [ego] : [])];
+    },
   });
+  // A5: the command-line tools behind those skills, installed into the app's own folder. Their folder goes on PATH
+  // now, so every agent the app starts finds them (and node, npm and npx on a computer without Node.js).
+  const appNpm = join(__dirname, '..', '..', 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  const tools = new SkillTools({ dir: join(base, 'tools'), node: { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' } },
+    ...(existsSync(appNpm) ? { npmCli: outsideAsar(appNpm) } : {}) });
+  try { tools.ensureBasics(); } catch { /* the folder could not be written: the tools stay as the computer has them */ }
+  { const p = tools.pathWithTools(); process.env[p.key] = p.value; }
+  const libView = () => ({ ...skills.view(), tools: tools.view() });
   host = new WorkbenchHost({ base, settings: deps.settings, enabled: deps.enabled, onChange: push, quotaOf: id => quotas.read(id), skills,
     // The roster is read again for each session, so a sign-in or install since the last look is seen.
     acpLaunch: async agent => priced((await readNow()).launches.get(agent)) });
@@ -109,6 +129,7 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
     const opt = (o && typeof o === 'object' ? o : {}) as { model?: unknown; fresh?: unknown };
     return (await get()).retry(num(id), { ...(typeof opt.model === 'string' ? { model: opt.model } : {}), fresh: opt.fresh === true });
   });
+  ipcMain.handle('v8:pickPlan', async (_e, id: unknown, which: unknown) => { if (which !== 'A' && which !== 'B') throw new Error('V8_BAD_PLAN'); return (await get()).pickPlan(num(id), which); });
   ipcMain.handle('v8:resumeNow', async (_e, id: unknown) => (await get()).resumeNow(num(id)));
   ipcMain.handle('v8:switchAccount', async (_e, id: unknown, account: unknown) => (await get()).switchAccount(num(id), typeof account === 'string' ? account : null));
   ipcMain.handle('v8:switchModel', async (_e, id: unknown, model: unknown) => (await get()).switchModel(num(id), typeof model === 'string' ? model : null));
@@ -116,7 +137,6 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
   ipcMain.handle('v8:waitForQuota', async (_e, id: unknown) => (await get()).waitForQuota(num(id)));
   ipcMain.handle('v8:agentQuota', (_e, id: unknown, fresh: unknown) => quotas.read(str(id), fresh === true));
   ipcMain.handle('v8:front', async (_e, id: unknown) => (await get()).front(num(id)));
-  ipcMain.handle('v8:supply', async () => (await get()).supplyStatus());
   // The agent roster and a plain chat with one agent. Reading the roster sends nothing; a chat message is a real message.
   const appRoot = join(__dirname, '..', '..');
   const rosterDeps = {
@@ -135,7 +155,9 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
   /** The last roster that finished reading, for things that must answer at once. */
   let lastRoster: Roster | null = null;
   const readNow = () => { roster = readRoster(rosterDeps); void roster.then(r => { lastRoster = r; }, () => undefined); return roster; };
-  chats = new AgentChats({ scratchRoot: join(base, 'agent-chat'), launch: async id => priced((await (roster ?? readNow())).launches.get(id)) });
+  chats = new AgentChats({ scratchRoot: join(base, 'agent-chat'), launch: async id => priced((await (roster ?? readNow())).launches.get(id)),
+    // Counted in the open project's ledger; with no workbench running yet there is no ledger to put it in.
+    onCost: (usd, basis) => { if (host) void get().then(w => w.spendOutside(usd, basis)).catch(() => undefined); } });
   ipcMain.handle('v8:agents', async (): Promise<RosterView> => {
     const r = await readNow();
     return { rows: r.rows, source: r.source as RosterView['source'] };
@@ -170,11 +192,25 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
     env: () => process.env,
     onSignedIn: () => { void chats?.close('antigravity-acp'); },
   });
+  // A9: Grok, Kimi and Cursor sign in with their own programs (deviceLogin.ts); one sign-in each at a time.
+  const deviceLogins = deviceLoginsOpen;
+  const deviceLogin = (id: string) => {
+    let l = deviceLogins.get(id);
+    const spec = DEVICE_SPECS[id];
+    if (!l && spec) {
+      l = new DeviceLogin({ spec, cli: () => deviceCli(lastRoster?.launches.get(id), spec), env: () => process.env,
+        open: url => { void shell.openExternal(url); }, onSignedIn: () => { void chats?.close(id); } });
+      deviceLogins.set(id, l);
+    }
+    return l;
+  };
   const signInFor = (id: string): { start(): Promise<import('../../shared/v8/agents').SignInFlow>; complete(flowId: string, code: string): import('../../shared/v8/agents').SignInFlow; current(flowId: string): import('../../shared/v8/agents').SignInFlow | null; cancel(): void } => {
     if (id === 'claude-acp') return claudeLogin!;
     if (id === 'codex-acp') return codexLogin!;
     if (id === 'antigravity-acp') return antigravityLogin!;
-    throw new Error('这个 agent 还不能在这里登录。');
+    const device = deviceLogin(id);
+    if (device) return device;
+    throw new Error(tr('这个 agent 还不能在这里登录。'));
   };
   ipcMain.handle('v8:agentSignInStart', async (_e, id: unknown) => {
     if (!lastRoster) await readNow();
@@ -186,7 +222,7 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
   // 第 7 步: install, update and remove agents from the official list, into the app's own folder.
   const listed = async (id: string) => {
     const agent = (await loadRegistry(rosterDeps.registry)).registry.agents.find(a => a.id === id);
-    if (!agent) throw new Error('官方名单上没有这个 agent。');
+    if (!agent) throw new Error(tr('官方名单上没有这个 agent。'));
     return agent;
   };
   const installing = new Set<string>();
@@ -197,7 +233,7 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
   });
   ipcMain.handle('v8:agentInstall', async (_e, id: unknown) => {
     const agent = await listed(str(id));
-    if (installing.has(agent.id)) throw new Error('正在装，等一下。');
+    if (installing.has(agent.id)) throw new Error(tr('正在装，等一下。'));
     installing.add(agent.id);
     try {
       await chats!.close(agent.id);
@@ -210,9 +246,9 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
   ipcMain.handle('v8:agentUninstall', async (_e, id: unknown) => {
     const agentId = str(id);
     const s = deps.settings();
-    const roles = s?.shell === 'acp' && s.acp ? [['小怪A', s.acp.lead], ['干活的小怪', s.acp.worker], ['审查', s.acp.reviewer ?? s.acp.lead]] as const : [];
+    const roles = s?.shell === 'acp' && s.acp ? [[tr('主理小怪'), s.acp.lead], [tr('干活的小怪'), s.acp.worker], [tr('审查'), s.acp.reviewer ?? s.acp.lead]] as const : [];
     const user = roles.find(([, r]) => r?.agent === agentId);
-    if (user) throw new Error(`${user[0]}正在用它，先换成别的 agent 再卸载。`);
+    if (user) throw new Error(tr('{0}正在用它，先换成别的 agent 再卸载。', [user[0]]));
     await chats!.close(agentId);
     uninstallAgent(rosterDeps.registry, agentId);
     const r = await readNow();
@@ -220,25 +256,45 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
   });
   ipcMain.handle('v8:magpieModels', async (_e, fresh: unknown) => {
     try { return await magpie!.models(fresh === true); }
-    catch (e) { throw new Error(e instanceof Error && e.message === 'V8_MAGPIE_MISSING' ? '这个程序里没有 Magpie。' : '开不了 Magpie：' + (e instanceof Error ? e.message : String(e))); }
+    catch (e) { throw new Error(e instanceof Error && e.message === 'V8_MAGPIE_MISSING' ? tr('这个程序里没有 Magpie。') : tr('开不了 Magpie：') + (e instanceof Error ? e.message : String(e))); }
   });
-  ipcMain.handle('v8:skills', () => skills.view());
+  // A12: the boss decides on a split.
+  ipcMain.handle('v8:decideSplit', async (_e, id: unknown, how: unknown) => { if (how !== 'split' && how !== 'whole') throw new Error('V8_ARGUMENT'); return (await get()).decideSplit(num(id), how); });
+  // A15: the boss starts a chain's next stage.
+  ipcMain.handle('v8:nextStage', async (_e, id: unknown) => (await get()).nextStage(num(id)));
+  // A10: the project's notebook.
+  ipcMain.handle('v8:notes', async () => (await get()).notesView());
+  ipcMain.handle('v8:noteAdd', async (_e, text: unknown) => (await get()).noteAdd(str(text)));
+  ipcMain.handle('v8:noteEdit', async (_e, id: unknown, text: unknown) => (await get()).noteEdit(num(id), str(text)));
+  ipcMain.handle('v8:noteRemove', async (_e, id: unknown) => (await get()).noteRemove(num(id)));
+  ipcMain.handle('v8:skills', () => libView());
+  // A5: the size first (nothing downloaded), then the install when the boss presses the button.
+  const toolBusy = new Set<string>();
+  ipcMain.handle('v8:skillToolSize', (_e, skill: unknown) => tools.size(str(skill)));
+  ipcMain.handle('v8:skillToolInstall', async (_e, skill: unknown) => {
+    const id = str(skill);
+    if (toolBusy.has(id)) throw new Error(tr('正在装，等一下。'));
+    toolBusy.add(id);
+    try { await tools.install(id); } finally { toolBusy.delete(id); }
+    return libView();
+  });
+  ipcMain.handle('v8:skillToolRemove', (_e, skill: unknown) => { tools.remove(str(skill)); return libView(); });
   // Requirement 41: drop a skill (an imported one is deleted; a shared one only taken out of this library), or bring
   // some in from a GitHub link. Importing downloads from GitHub; it starts only when the boss presses the button.
   ipcMain.handle('v8:skillRemove', (_e, id: unknown) => {
     if (typeof id !== 'string') throw new Error('V8_BAD_SKILL');
-    return { how: skills.remove(id), view: skills.view() };
+    return { how: skills.remove(id), view: libView() };
   });
-  ipcMain.handle('v8:skillsRestore', () => { skills.restoreRemoved(); return skills.view(); });
+  ipcMain.handle('v8:skillsRestore', () => { skills.restoreRemoved(); return libView(); });
   ipcMain.handle('v8:skillImport', async (_e, link: unknown) => {
     if (typeof link !== 'string') throw new Error('V8_BAD_LINK');
     const r = await skills.importFrom(link);
-    return { ...r, view: skills.view() };
+    return { ...r, view: libView() };
   });
   ipcMain.handle('v8:skillsEnable', (_e, ids: unknown, on: unknown) => {
     if (!Array.isArray(ids) || !ids.every(i => typeof i === 'string')) throw new Error('V8_ARGUMENT');
     skills.setEnabled(ids as string[], on === true);
-    return skills.view();
+    return libView();
   });
   // 让 agent 复述 (requirement 50): a real message to the chosen agent, in a fresh chat that is closed afterwards.
   ipcMain.handle('v8:skillRetell', async (_e, id: unknown, agent: unknown) => {
@@ -252,9 +308,9 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
     }
     const turn = await chats!.say(str(agent), retellPrompt(text));
     await chats!.close(str(agent));
-    if (turn.error || !turn.reply.trim()) throw new Error(turn.error ?? '它没有回话。');
+    if (turn.error || !turn.reply.trim()) throw new Error(turn.error ?? tr('它没有回话。'));
     skills.saveRetold(str(id), str(agent), turn.reply);
-    return skills.view();
+    return libView();
   });
   ipcMain.handle('v8:agentChatClose', async (_e, id: unknown) => chats!.close(str(id)));
   /** Every project that has a workbench folder (for project switching). Reads only; opens nothing. */
@@ -270,7 +326,7 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
   /** The boss picks a project folder: any folder (a git repository, or a plain one the app keeps a private snapshot of). */
   ipcMain.handle('v8:chooseFolder', async evt => {
     const win = BrowserWindow.fromWebContents(evt.sender) ?? undefined;
-    const r = win ? await dialog.showOpenDialog(win, { title: '选择项目文件夹', properties: ['openDirectory'] }) : await dialog.showOpenDialog({ title: '选择项目文件夹', properties: ['openDirectory'] });
+    const r = win ? await dialog.showOpenDialog(win, { title: tr('选择项目文件夹'), properties: ['openDirectory'] }) : await dialog.showOpenDialog({ title: tr('选择项目文件夹'), properties: ['openDirectory'] });
     if (r.canceled || !r.filePaths[0]) return null;
     const path = r.filePaths[0];
     return { path, name: basename(path), git: existsSync(join(path, '.git')) };
@@ -279,6 +335,7 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
 
 /** On quit: close the sessions. Running work is recovered on the next start. */
 export async function shutdownV8(): Promise<void> {
+  for (const l of deviceLoginsOpen.values()) l.cancel();
   claudeLogin?.cancel();
   codexLogin?.cancel();
   antigravityLogin?.cancel();

@@ -1,13 +1,16 @@
+import { tr } from '../../shared/i18n';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 /**
- * Leftovers of building and testing, never the gremlin's work: kept out of every diff the reviewer or the boss sees.
+ * Leftovers of running tests, never the gremlin's work: kept out of every diff the reviewer or the boss sees.
  * (Found in the first real review: running the tests left __pycache__/*.pyc, and review rejected the work for it.)
+ * Only caches: build output (dist, build, out) and logs can be what a project delivers (a video rendered to out/),
+ * so they follow the project's own .gitignore (C3 review, finding 14).
  */
-export const ARTIFACTS = ['__pycache__', '*.pyc', '*.pyo', '.pytest_cache', 'node_modules', 'dist', 'build', 'out', '.cache', 'coverage', '.DS_Store', '*.log'];
+export const ARTIFACTS = ['__pycache__', '*.pyc', '*.pyo', '.pytest_cache', 'node_modules', '.cache', '.DS_Store'];
 const artifactSpecs = ARTIFACTS.map(a => ':(exclude,glob)**/' + a + (a.includes('*') ? '' : '/**'));
 const artifactFiles = ARTIFACTS.filter(a => a.includes('*') || a.startsWith('.DS')).map(a => ':(exclude,glob)**/' + a);
 
@@ -24,6 +27,10 @@ export interface ApplyResult { applied: string[]; conflicts: string[] }
  * to the project's own file: the same file, no copy, no extra disk. The idea is OpenMausBot's (server/checkpoints.ts,
  * after Roo-Code): big media stays out of the snapshots. A gremlin that rewrites such a file in place changes the
  * project's file at once; tools that render or convert write new files, which are reviewed and accepted as usual.
+ *
+ * So the project's file cannot be changed before the boss accepts anything (C3 review, finding 2), a linked file is
+ * read-only while its ticket is open (lock), and writable again once the ticket is done or stopped (release). Being
+ * the same file, the project's copy is read-only meanwhile too. Writes to it are also refused by the approval rule.
  */
 export const BIG_FILE = 20 * 1024 * 1024;
 interface BigFile { path: string; size: number; mtimeMs: number; linked: boolean }
@@ -73,6 +80,10 @@ export class TicketWorkspaces {
   /** The project's big files (its gitignore rules and build leftovers respected), kept out of the snapshot store. */
   private bigFiles(): Array<{ path: string; size: number; mtimeMs: number }> {
     if (!existsSync(join(this.mirror, 'HEAD'))) return [];
+    // The store's exclude list holds the big files found last time: cleared first, so those are found again rather
+    // than slipping into the snapshot as ordinary files (C3 review, finding 13).
+    mkdirSync(join(this.mirror, 'info'), { recursive: true });
+    writeFileSync(join(this.mirror, 'info', 'exclude'), '');
     const listed = execFileSync('git', ['--git-dir', this.mirror, '--work-tree', this.repoRoot, '-c', 'core.quotepath=false', 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '.', ...artifactSpecs, ...artifactFiles],
       { windowsHide: true, maxBuffer: 64 << 20, env: { ...process.env, GIT_INDEX_FILE: join(this.mirror, 'big-index') } }).toString().split('\0').filter(Boolean);
     const out: Array<{ path: string; size: number; mtimeMs: number }> = [];
@@ -122,7 +133,18 @@ export class TicketWorkspaces {
       kept.push({ ...b, linked });
     }
     writeFileSync(this.bigFile(ticketId), JSON.stringify(kept));
+    this.lock(ticketId);
     return dir;
+  }
+
+  /** The linked big files of a ticket, read-only while it is open (the project's copy too: it is the same file). */
+  lock(ticketId: number): void {
+    for (const b of this.big(ticketId)) if (b.linked) { try { chmodSync(join(this.path(ticketId), b.path), 0o444); } catch { /* gone */ } }
+  }
+
+  /** Writable again: the ticket is done or stopped. */
+  release(ticketId: number): void {
+    for (const b of this.big(ticketId)) if (b.linked) { try { chmodSync(join(this.path(ticketId), b.path), 0o666); } catch { /* gone */ } }
   }
 
   /**
@@ -197,6 +219,8 @@ export class TicketWorkspaces {
         const ok = sameFile || (started ? !!theirs && theirs.size === started.size && theirs.mtimeMs === started.mtimeMs : !theirs);
         return { ...c, target, wanted: null as Buffer | null, ok, byFile: !sameFile };
       }
+      // A folder where the file should go cannot be replaced by it: a conflict, nothing goes in.
+      if (theirs?.isDirectory()) return { ...c, target, wanted: null as Buffer | null, ok: false, byFile: false };
       const now = current(c.path), was = fromBase(c.path);
       const wanted = c.status === 'D' ? null : readFileSync(join(dir, c.path));
       // Untouched since the ticket started, or already exactly what the gremlin made.
@@ -204,12 +228,44 @@ export class TicketWorkspaces {
     });
     const result: ApplyResult = { applied: [], conflicts: plan.filter(c => !c.ok).map(c => c.path) };
     if (result.conflicts.length) return result;
-    for (const c of plan) {
-      if (c.status === 'D') rmSync(c.target, { force: true });
-      else if (c.byFile) { mkdirSync(dirname(c.target), { recursive: true }); rmSync(c.target, { force: true }); copyFileSync(join(dir, c.path), c.target); }
-      else if (c.wanted) { mkdirSync(dirname(c.target), { recursive: true }); writeFileSync(c.target, c.wanted); }
-      result.applied.push(c.path);
+    // All or nothing (C3 review, finding 3). First every new version is written beside its target; nothing in the
+    // project has changed yet, so a failure here (a full disk) just cleans up. Then each target is swapped: its old
+    // version renamed aside, the new one renamed in. A failure there puts back every old version swapped so far.
+    const tag = '.beastie-' + process.pid + '-' + Date.now().toString(36);
+    const staged: Array<{ target: string; fresh: string | null; old: string | null; path: string; keep?: boolean }> = [];
+    try {
+      for (const c of plan) {
+        if (c.status === 'D') { staged.push({ target: c.target, fresh: null, old: null, path: c.path }); continue; }
+        // Already the very file the gremlin made (a big file changed through its link): nothing to write.
+        if (!c.byFile && c.wanted === null) { staged.push({ target: c.target, fresh: null, old: null, path: c.path, keep: true }); continue; }
+        mkdirSync(dirname(c.target), { recursive: true });
+        const fresh = c.target + tag + '.new';
+        if (c.byFile) copyFileSync(join(dir, c.path), fresh);
+        else writeFileSync(fresh, c.wanted ?? Buffer.alloc(0));
+        staged.push({ target: c.target, fresh, old: null, path: c.path });
+      }
+    } catch (err) {
+      for (const st of staged) if (st.fresh) rmSync(st.fresh, { force: true });
+      throw err;
     }
+    const swapped: typeof staged = [];
+    try {
+      for (const st of staged) {
+        if (st.keep) continue;
+        if (existsSync(st.target)) { st.old = st.target + tag + '.old'; renameSync(st.target, st.old); }
+        swapped.push(st);
+        if (st.fresh) renameSync(st.fresh, st.target);
+      }
+    } catch (err) {
+      for (const st of swapped.reverse()) {
+        try { if (st.fresh && existsSync(st.target) && !existsSync(st.fresh)) rmSync(st.target, { force: true }); } catch { /* keep going */ }
+        try { if (st.old) renameSync(st.old, st.target); } catch { /* keep going */ }
+      }
+      for (const st of staged) if (st.fresh) rmSync(st.fresh, { force: true });
+      throw err;
+    }
+    // Everything is in place; an old version that cannot be removed is only a leftover, not a failure.
+    for (const st of staged) { if (st.old) { try { rmSync(st.old, { force: true }); } catch { /* left behind */ } } result.applied.push(st.path); }
     return result;
   }
 
@@ -228,10 +284,10 @@ export class TicketWorkspaces {
       const bigLines: string[] = [], skip: string[] = [];
       for (const c of this.changes(ticketId)) {
         const b = bigs.find(x => x.path === c.path);
-        if (b) bigLines.push(c.status === 'D' ? `大文件 ${c.path}（${mb(b.size)}）：删掉了`
-          : `大文件 ${c.path}（原来 ${mb(b.size)}）：换成了新的一份${b.linked ? '；如果是在原文件上直接改的，改动已经在项目里了' : ''}`);
+        if (b) bigLines.push(c.status === 'D' ? tr('大文件 {0}（{1}）：删掉了', [c.path, mb(b.size)])
+          : tr('大文件 {0}（原来 {1}）：换成了新的一份{2}', [c.path, mb(b.size), b.linked ? tr('；如果是在原文件上直接改的，改动已经在项目里了') : '']));
         else if (c.status !== 'D' && sizeIn(c.path) >= BIG_FILE) {
-          bigLines.push(`大文件 ${c.path}（${mb(sizeIn(c.path))}）：${c.status === 'A' ? '新做的' : '改了'}`);
+          bigLines.push(tr('大文件 {0}（{1}）：{2}', [c.path, mb(sizeIn(c.path)), c.status === 'A' ? tr('新做的') : tr('改了')]));
           skip.push(':(exclude,literal)' + c.path);
         }
       }
@@ -240,7 +296,7 @@ export class TicketWorkspaces {
       const out = execFileSync('git', ['-C', dir, 'diff', this.base(ticketId) ?? 'HEAD', '--no-color', '--unified=' + (o.context ?? 3), '--', '.', ...artifactSpecs, ...artifactFiles, ...skip],
         { windowsHide: true, maxBuffer: 8 << 20 }).toString();
       const text = (bigLines.length ? bigLines.join('\n') + '\n\n' : '') + out;
-      return text.length > max ? text.slice(0, max) + '\n…（改动太长，后面省略）' : text;
+      return text.length > max ? text.slice(0, max) + tr('\n…（改动太长，后面省略）') : text;
     } catch { return ''; }
   }
 }

@@ -11,7 +11,7 @@
 
 /* 工位 */
 .v8p-floor { position: absolute; left: 0; width: 620px; bottom: 0; height: 250px; background-color: var(--paper2); border-top: 3px solid var(--edge); border-right: 3px solid var(--edge); border-top-right-radius: 26px; background-image: radial-gradient(var(--dot) 1.3px, transparent 1.6px); background-size: 14px 14px; }
-.v8p-slot .v8p-hero { position: absolute; left: 150px; bottom: 206px; height: 372px; animation: v8-bob 1s steps(2) infinite; }
+.v8p-slot .v8p-hero { position: absolute; left: 150px; bottom: 206px; height: 372px; animation: v8-bob 1.2s ease-in-out infinite; will-change: transform; }
 .v8p-sign { position: absolute; left: 300px; top: 112px; width: 300px; background: var(--paper); border: 2.5px solid var(--edge); border-radius: 16px; padding: 13px 16px; box-shadow: 5px 5px 0 var(--shadow); }
 .v8p-biglive { font: 700 15px/1.4 var(--mono); margin-top: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .v8p-biglive::after { content: "▍"; animation: v8-blink 1s steps(2) infinite; color: var(--amber); margin-left: 3px; }
@@ -140,3 +140,7 @@
 .v8p-tuning { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
 .v8p-tuning .v8-quota { font-size: 12px; }
 .v8p-tuning .v8a-pick { display: flex; flex-direction: column; gap: 6px; }
+
+/* 圆桌会议 (A6) on the lead's page */
+.v8p-turn p.v8p-plan { font-size: 16px; white-space: pre-wrap; }
+.v8p-plan em { margin-left: 8px; font: 600 13px/1 var(--text); font-style: normal; color: var(--ink3); }

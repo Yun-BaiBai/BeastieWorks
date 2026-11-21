@@ -1,8 +1,12 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+// A8: the interface language is set before any other module of the main process loads.
+import { uiLanguageNow } from './i18nInit';
+import { app, BrowserWindow, ipcMain, screen, shell } from 'electron';
 import { existsSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { readAppConfig, writeAppConfig, type AppConfig } from './appConfig';
 import { registerV8Ipc, shutdownV8 } from './v8/ipc';
+import { dictate } from './dictate';
+import { language, setLanguage } from '../shared/i18n';
 
 /**
  * 小怪工坊 (Beastie Works): one window, the v8 workbench. Everything the app does lives in ./v8; this file opens the
@@ -10,7 +14,12 @@ import { registerV8Ipc, shutdownV8 } from './v8/ipc';
  * the network: no updates, no analytics, no remote data (老板 2026-11-20).
  */
 
-const MIN = { width: 880, height: 560 };
+/** The whole screen is one 1440×920 picture scaled to the window (renderer Canvas.tsx). Below about this size the
+ *  small print gets hard to read, so the window opens at about the size the boss picked and does not go smaller (A13,
+ *  老板 2026-11-20: "默认打开差不多就是这么大"; sizes are in Windows scaled pixels, ×1.25 on his screen).
+ *  On a screen smaller than that, the limit is the screen's own free area. */
+const MIN = { width: 1090, height: 710 };
+const DEFAULT = MIN;
 let mainWindow: BrowserWindow | null = null;
 
 /** Only web pages go to the person's browser; anything else a page asks to open is refused. */
@@ -21,11 +30,14 @@ function openOutside(url: string): boolean {
 }
 
 function createWindow(): BrowserWindow {
+  const area = screen.getPrimaryDisplay().workAreaSize;
+  const fit = (want: { width: number; height: number }) => ({ width: Math.min(want.width, area.width), height: Math.min(want.height, area.height) });
+  const min = fit(MIN), size = fit(DEFAULT);
   const win = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: MIN.width,
-    minHeight: MIN.height,
+    width: size.width,
+    height: size.height,
+    minWidth: min.width,
+    minHeight: min.height,
     icon: join(__dirname, 'tray-icon.png'),
     title: 'Beastie Works',
     autoHideMenuBar: true,
@@ -53,7 +65,20 @@ function createWindow(): BrowserWindow {
 }
 
 ipcMain.handle('config:get', (): AppConfig => readAppConfig());
+// A8: the window asks for the language before it shows anything; changing it restarts the app.
+ipcMain.on('i18n:lang', event => { event.returnValue = language(); });
+ipcMain.handle('i18n:set', (_event, choice: unknown) => {
+  if (choice !== 'zh' && choice !== 'en' && choice !== 'system') throw new Error('V8_ARGUMENT');
+  writeAppConfig({ uiLanguage: choice });
+  setLanguage(uiLanguageNow());
+  // Words made when the main process started (desk names, notes) are in the old language: start again. Work that was
+  // running carries on after the restart, as after any restart.
+  setTimeout(() => { app.relaunch(); app.quit(); }, 200);
+  return language();
+});
 ipcMain.handle('config:update', (_event, patch: unknown): AppConfig => writeAppConfig(patch as Partial<AppConfig>));
+// A4: Windows' own voice typing for the text box the boss is in (dictate.ts).
+ipcMain.handle('app:dictate', () => dictate());
 ipcMain.handle('app:openExternal', (_event, url: unknown) =>
   typeof url === 'string' && openOutside(url) ? { ok: true } : { ok: false, error: 'blocked url' });
 
@@ -87,5 +112,13 @@ if (!app.requestSingleInstanceLock()) {
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });
   app.on('window-all-closed', () => { app.quit(); });
-  app.on('will-quit', () => { void shutdownV8(); });
+  // Quitting waits for the agents, sign-in programs and Magpie to stop (at most 10 s), then quits for real; Electron
+  // does not wait for a promise on its own (C3 review, finding 7).
+  let quitting = false;
+  app.on('will-quit', event => {
+    if (quitting) return;
+    quitting = true;
+    event.preventDefault();
+    void Promise.race([shutdownV8().catch(() => undefined), new Promise(r => setTimeout(r, 10_000))]).then(() => app.quit());
+  });
 }

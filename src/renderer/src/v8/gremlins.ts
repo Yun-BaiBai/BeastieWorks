@@ -1,3 +1,4 @@
+import { tr } from '@shared/i18n';
 import { leadName } from './leadName';
 import { GREMLIN_ART, type GremlinCast, type GremlinExtraPose, type GremlinPose } from '../projects/office/gremlinArt';
 import type { TicketState } from '@shared/v8/tickets';
@@ -12,14 +13,14 @@ export const slotCast = (order: number): GremlinCast => WORKERS[((order % WORKER
 export interface CrewMember { cast: GremlinCast; name: string; title: string; role: 'lead' | 'reviewer' | 'worker' }
 /** Everyone in the workshop, for the badge wall. */
 export const CREW: CrewMember[] = [
-  { cast: 'boss', get name() { return leadName(); }, title: '主理', role: 'lead' },
-  { cast: 'lanky', name: '围巾', title: '审查', role: 'reviewer' },
-  { cast: 'alien', name: '四眼', title: '干活', role: 'worker' },
-  { cast: 'tri', name: '三眼', title: '干活', role: 'worker' },
-  { cast: 'jelly', name: '水母', title: '干活', role: 'worker' },
-  { cast: 'blob', name: '团子', title: '干活', role: 'worker' },
-  { cast: 'fuzz', name: '毛毛', title: '干活', role: 'worker' },
-  { cast: 'spike', name: '刺刺', title: '干活', role: 'worker' },
+  { cast: 'boss', get name() { return leadName(); }, title: tr('主理'), role: 'lead' },
+  { cast: 'lanky', name: tr('围巾'), title: tr('审查'), role: 'reviewer' },
+  { cast: 'alien', name: tr('四眼'), title: tr('干活'), role: 'worker' },
+  { cast: 'tri', name: tr('三眼'), title: tr('干活'), role: 'worker' },
+  { cast: 'jelly', name: tr('水母'), title: tr('干活'), role: 'worker' },
+  { cast: 'blob', name: tr('团子'), title: tr('干活'), role: 'worker' },
+  { cast: 'fuzz', name: tr('毛毛'), title: tr('干活'), role: 'worker' },
+  { cast: 'spike', name: tr('刺刺'), title: tr('干活'), role: 'worker' },
 ];
 
 export type AnyPose = GremlinPose | GremlinExtraPose;

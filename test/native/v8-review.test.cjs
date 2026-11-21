@@ -12,7 +12,7 @@ const { V8Workbench } = load('src/main/v8/workbench.ts');
 
 const done = (extra = '') => ({ kind: 'done', summary: '把减号改成了加号' + extra, changed: ['calc.py'], verification: { command: 'python test_calc.py', output: 'ok' } });
 const checks = (ok = [true, true, true]) => [
-  { label: '对上原话了吗', ok: ok[0], detail: 'x' }, { label: '有验证输出吗', ok: ok[1], detail: 'y' }, { label: '有没有多改', ok: ok[2], detail: 'z' }];
+  { label: '对上原话了吗', ok: ok[0], detail: 'x' }, { label: '有验证结果吗', ok: ok[1], detail: 'y' }, { label: '有没有多改', ok: ok[2], detail: 'z' }];
 const pass = { verdict: 'pass', reason: '三条都对', checks: checks() };
 const fail = why => ({ verdict: 'fail', reason: why, checks: checks([false, true, true]) });
 
@@ -47,7 +47,7 @@ test('a "done" waits for review; a pass reaches the boss and is recorded with it
   assert.deepEqual(s.pendingReviews(), []);
   const [r] = s.reviews({ ticketId: id });
   assert.equal(r.verdict, 'passed');
-  assert.deepEqual(r.checks.map(c => c.label), ['对上原话了吗', '有验证输出吗', '有没有多改']);
+  assert.deepEqual(r.checks.map(c => c.label), ['对上原话了吗', '有验证结果吗', '有没有多改']);
   assert.equal(s.recordReview(m, pass), 'stale', 'a second verdict on the same report changes nothing');
 });
 
@@ -224,4 +224,30 @@ test('workbench with review off: done work goes straight to the boss', async t =
   await until(() => b.scheduler.tickets()[0]?.state === 'REVIEW', 'the ticket');
   assert.equal(b.board().review.enabled, false);
   assert.equal(b.scheduler.reviews().length, 0);
+});
+
+test('the review\'s cost is counted though it arrives after the verdict; a review that never settles still ends (B4 rerun)', async t => {
+  const db = new Database(':memory:');
+  t.after(() => db.close());
+  const s = new Scheduler(db, { review: true });
+  const shell = new FakeShell(spec => spec.role === 'reviewer'
+    ? { async onPrompt(c, text) {
+      await c.hostTool('submit_review', pass);
+      if (/不收尾/.test(text)) return;
+      c.emit({ type: 'cost', usd: 0.007, basis: 'reported' }); c.settle();
+    } }
+    : { async onPrompt(c) { await c.hostTool('submit_report', done()); c.settle(); } });
+  const d = new Dispatcher(s, shell, { workdir: id => 'D:/work/ticket-' + id });
+  let spent = 0;
+  const r = new Reviewer(s, d, shell, { model: null, cwd: id => 'D:/work/ticket-' + id, diff: () => '+x', settleGraceMs: 200, onCost: usd => { spent += usd; } });
+  r.start();
+  t.after(async () => { await r.stop(); await d.shutdown(); });
+  const open = async text => { const id = s.openTicket({ fromMessageId: s.bossSaid(text), routingNote: '' }); await d.pump(); return id; };
+  const a = await open('修 calc');
+  await until(() => s.state(a) === 'REVIEW', 'the first review');
+  await until(() => shell.sessions.filter(x => x.spec.role === 'reviewer').every(x => x.closed), 'the review closed');
+  assert.equal(spent, 0.007);
+  const b = await open('修 calc，不收尾');
+  await until(() => s.state(b) === 'REVIEW', 'the second review, after the short wait');
+  await until(() => shell.sessions.filter(x => x.spec.role === 'reviewer').every(x => x.closed), 'both reviews closed');
 });

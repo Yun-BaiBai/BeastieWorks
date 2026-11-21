@@ -171,7 +171,7 @@ test('"done" without verification output is sent back to the gremlin, which then
   f.l.bossSays('假完成一下');
   await until(() => f.s.tickets()[0]?.state === 'BLOCKED', 'the honest report');
   assert.ok(f.activity.some(a => a.type === 'refused' && a.code === 'V8_DONE_NEEDS_VERIFICATION'));
-  assert.match(f.s.latestReport(1).tried, /必须附真实的验证命令和输出/);
+  assert.match(f.s.latestReport(1).tried, /必须附真实的验证：怎么验证的，和验证结果原样/);
   assert.equal(f.s.messages(1).filter(m => m.kind === 'report').length, 1, 'the refused report was never recorded');
 });
 

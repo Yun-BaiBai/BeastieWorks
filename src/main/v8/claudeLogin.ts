@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { stripVTControlCharacters } from 'node:util';
@@ -66,7 +67,7 @@ export class ClaudeLogin {
   async start(): Promise<SignInFlow> {
     if (this.flow?.status.phase === 'waiting') return { ...this.flow.status };
     const cli = this.o.cli();
-    if (!cli) throw new Error('这台电脑上没找到 Claude 的程序。');
+    if (!cli) throw new Error(tr('这台电脑上没找到 Claude 的程序。'));
     const env = { ...this.o.env(), NO_COLOR: '1' };
     // Never replace a working sign-in because the button was clicked again.
     if (await status(cli, env) === 'in') return { phase: 'succeeded', flowId: randomUUID(), url: null, message: null };
@@ -75,20 +76,20 @@ export class ClaudeLogin {
     this.flow = flow;
     return new Promise<SignInFlow>(resolve => {
       const ready = () => resolve({ ...flow.status });
-      flow.timers.push(setTimeout(() => { this.finish(flow, 'failed', 'Claude 没有及时给出登录网址。确认它装好了、能联网，再试一次。'); ready(); }, this.o.linkTimeoutMs ?? 30_000));
-      flow.timers.push(setTimeout(() => this.finish(flow, 'expired', '登录网址过期了，重新点"去登录"。'), this.o.lifetimeMs ?? 15 * 60_000));
+      flow.timers.push(setTimeout(() => { this.finish(flow, 'failed', tr('Claude 没有及时给出登录网址。确认它装好了、能联网，再试一次。')); ready(); }, this.o.linkTimeoutMs ?? 30_000));
+      flow.timers.push(setTimeout(() => this.finish(flow, 'expired', tr('登录网址过期了，重新点"去登录"。')), this.o.lifetimeMs ?? 15 * 60_000));
       let child: ChildProcessWithoutNullStreams;
       try {
         child = spawn(cli.command, [...cli.args, 'auth', 'login'], { env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
       } catch {
-        this.finish(flow, 'failed', 'Claude 启动不了。');
+        this.finish(flow, 'failed', tr('Claude 启动不了。'));
         ready();
         return;
       }
       flow.child = child;
       const receive = (chunk: Buffer) => {
         if (flow.status.phase !== 'waiting') return;
-        if (flow.output.length + chunk.length > MAX_OUTPUT) { this.finish(flow, 'failed', 'Claude 的回应看不懂，更新它再试。'); ready(); return; }
+        if (flow.output.length + chunk.length > MAX_OUTPUT) { this.finish(flow, 'failed', tr('Claude 的回应看不懂，更新它再试。')); ready(); return; }
         flow.output += chunk.toString('utf8');
         if (flow.status.url) return;
         const url = claudeLoginPrompt(flow.output);
@@ -99,7 +100,7 @@ export class ClaudeLogin {
       };
       child.stdout.on('data', receive);
       child.stderr.on('data', receive);
-      child.once('error', () => { this.finish(flow, 'failed', 'Claude 启动不了。'); ready(); });
+      child.once('error', () => { this.finish(flow, 'failed', tr('Claude 启动不了。')); ready(); });
       child.once('close', code => {
         if (flow.child === child) flow.child = null;
         if (flow.status.phase !== 'waiting') return;
@@ -107,8 +108,8 @@ export class ClaudeLogin {
         void status(cli, env).then(s => {
           if (s === 'in') { this.finish(flow, 'succeeded'); this.o.onSignedIn?.(); }
           else this.finish(flow, 'failed', flow.codeSent && /invalid|expired|denied|rejected/i.test(said)
-            ? 'Anthropic 没接受这串代码。重新点"去登录"，把页面上的代码整串贴过来。'
-            : code === 0 ? 'Claude 结束了，但没有登录上。再试一次。' : 'Claude 在登录完成前停了。检查网络再试。');
+            ? tr('Anthropic 没接受这串代码。重新点"去登录"，把页面上的代码整串贴过来。')
+            : code === 0 ? tr('Claude 结束了，但没有登录上。再试一次。') : tr('Claude 在登录完成前停了。检查网络再试。'));
           ready();
         });
       });
@@ -118,10 +119,10 @@ export class ClaudeLogin {
   /** Hand the code from Anthropic's page to the waiting program. */
   complete(flowId: string, pasted: string): SignInFlow {
     const flow = this.flow;
-    if (!flow || flow.status.flowId !== flowId || flow.status.phase !== 'waiting' || !flow.child) throw new Error('这次登录已经结束了，重新点"去登录"。');
-    if (flow.codeSent) throw new Error('代码已经交过了，等结果。');
+    if (!flow || flow.status.flowId !== flowId || flow.status.phase !== 'waiting' || !flow.child) throw new Error(tr('这次登录已经结束了，重新点"去登录"。'));
+    if (flow.codeSent) throw new Error(tr('代码已经交过了，等结果。'));
     const code = claudeLoginCode(pasted);
-    if (!code) throw new Error('把登录后页面上显示的那一整串代码贴过来。');
+    if (!code) throw new Error(tr('把登录后页面上显示的那一整串代码贴过来。'));
     flow.codeSent = true;
     flow.child.stdin.write(`${code}\n`);
     return { ...flow.status };
@@ -133,7 +134,7 @@ export class ClaudeLogin {
   }
 
   cancel(): void {
-    if (this.flow) this.finish(this.flow, 'cancelled', '已取消。');
+    if (this.flow) this.finish(this.flow, 'cancelled', tr('已取消。'));
   }
 
   private finish(flow: Flow, phase: Exclude<SignInFlow['phase'], 'waiting'>, message?: string): void {

@@ -1,8 +1,10 @@
+import { tr } from '../../shared/i18n';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { AgentQuirk } from './acpQuirks';
 import type { SignIn } from './agentSignIn';
+import { cursorSignedIn } from './cursorStatus';
 
 /**
  * More agents from the official list (requirement 13: the common agents should work, not only the boss's), each with
@@ -87,53 +89,58 @@ export const MORE_QUIRKS: Record<string, AgentQuirk> = {
   gemini: {
     displayName: 'Gemini',
     signIn: (_l, env) => geminiSignedIn(env),
-    signInHelp: '要先登录一次 Gemini：在终端里运行 gemini，按提示用 Google 账号登录；或者设好 GEMINI_API_KEY。',
+    signInHelp: tr('要先登录一次 Gemini：在终端里运行 gemini，按提示用 Google 账号登录；或者设好 GEMINI_API_KEY。'),
   },
   'github-copilot-cli': {
     displayName: 'GitHub Copilot',
     signIn: (_l, env) => copilotSignedIn(env),
-    signInHelp: '要先登录一次 GitHub Copilot：在终端里运行 copilot login。',
+    signInHelp: tr('要先登录一次 GitHub Copilot：在终端里运行 copilot login。'),
   },
+  // A9: Cursor, Kimi and Grok sign in from the roster (deviceLogin.ts).
   cursor: {
     displayName: 'Cursor',
-    signInHelp: '要先登录一次 Cursor：在终端里运行 cursor-agent login；或者设好 CURSOR_API_KEY。',
+    signIn: (launch, env) => cursorSignedIn(launch, env),
+    signInFlow: true,
+    signInHelp: tr('要登录一次 Cursor（用你自己的 Cursor 账号）。点右边的"去登录"；或者设好 CURSOR_API_KEY。'),
   },
   'kimi-code': {
     displayName: 'Kimi',
     signIn: (_l, env) => kimiSignedIn(env),
-    signInHelp: '要先登录一次 Kimi：在终端里运行 kimi，按提示用 Kimi 账号登录。',
+    signInFlow: true,
+    signInHelp: tr('要登录一次 Kimi（用你自己的 Kimi 账号）。点右边的"去登录"。'),
   },
   kiro: {
     displayName: 'Kiro',
     signIn: (_l, env) => kiroSignedIn(env),
-    signInHelp: '要先登录一次 Kiro：在终端里运行 kiro-cli login；或者设好 KIRO_API_KEY。',
+    signInHelp: tr('要先登录一次 Kiro：在终端里运行 kiro-cli login；或者设好 KIRO_API_KEY。'),
   },
   cline: {
     displayName: 'Cline',
     signIn: (_l, env) => clineSignedIn(env),
-    signInHelp: '要先设置一次 Cline：在终端里运行 cline auth；或者设好 CLINE_API_KEY。',
+    signInHelp: tr('要先设置一次 Cline：在终端里运行 cline auth；或者设好 CLINE_API_KEY。'),
   },
   'factory-droid': {
     displayName: 'Droid',
     signIn: (_l, env) => droidSignedIn(env),
-    signInHelp: '要先登录一次 Droid：在终端里运行 droid 并登录；或者设好 FACTORY_API_KEY。',
+    signInHelp: tr('要先登录一次 Droid：在终端里运行 droid 并登录；或者设好 FACTORY_API_KEY。'),
   },
   devin: {
     displayName: 'Devin',
     signIn: (_l, env) => devinSignedIn(env),
-    signInHelp: '要先登录一次 Devin：在终端里运行 devin auth login；或者设好 WINDSURF_API_KEY。',
+    signInHelp: tr('要先登录一次 Devin：在终端里运行 devin auth login；或者设好 WINDSURF_API_KEY。'),
   },
   'qwen-code': {
     displayName: 'Qwen',
-    signInHelp: '要先设置一次 Qwen：在终端里运行 qwen，按提示登录或填好模型来源。',
+    signInHelp: tr('要先设置一次 Qwen：在终端里运行 qwen，按提示登录或填好模型来源。'),
   },
   'grok-build': {
     displayName: 'Grok',
     signIn: (_l, env) => grokSignedIn(env),
-    signInHelp: '要先登录一次 Grok：在终端里运行 grok login。',
+    signInFlow: true,
+    signInHelp: tr('要登录一次 Grok（用你自己的 Grok 账号）。点右边的"去登录"。'),
   },
   opencode: {
     displayName: 'OpenCode',
-    signInHelp: '要先给 OpenCode 配一个模型来源：在终端里运行 opencode auth login。',
+    signInHelp: tr('要先给 OpenCode 配一个模型来源：在终端里运行 opencode auth login。'),
   },
 };

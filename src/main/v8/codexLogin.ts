@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { stripVTControlCharacters } from 'node:util';
@@ -33,10 +34,10 @@ export function codexDevicePrompt(output: string): { url: string; code: string }
 
 /** Plain words for why the sign-in did not finish (OpenMausBot's loginFailure). */
 export function codexLoginFailure(output: string): string {
-  if (/(unexpected argument|unrecognized (argument|option)|unknown option).*device-auth/i.test(output)) return '这个 Codex 程序太旧，不支持网页登录。在 agent 名单里更新 Codex 再试。';
-  if (/device.{0,40}(disabled|not enabled|not allowed)|enable.{0,40}device/i.test(output)) return '你的 ChatGPT 账号没打开"设备码登录"。在 ChatGPT 的安全设置里打开它（或请工作区管理员允许），再试一次。';
-  if (/expired|expiration|timed out/i.test(output)) return '登录代码过期了，重新点"去登录"拿一个新的。';
-  return '没登录上。检查网络、确认 ChatGPT 允许设备码登录，再试一次。';
+  if (/(unexpected argument|unrecognized (argument|option)|unknown option).*device-auth/i.test(output)) return tr('这个 Codex 程序太旧，不支持网页登录。在 agent 名单里更新 Codex 再试。');
+  if (/device.{0,40}(disabled|not enabled|not allowed)|enable.{0,40}device/i.test(output)) return tr('你的 ChatGPT 账号没打开"设备码登录"。在 ChatGPT 的安全设置里打开它（或请工作区管理员允许），再试一次。');
+  if (/expired|expiration|timed out/i.test(output)) return tr('登录代码过期了，重新点"去登录"拿一个新的。');
+  return tr('没登录上。检查网络、确认 ChatGPT 允许设备码登录，再试一次。');
 }
 
 interface Flow { status: SignInFlow; child: ChildProcessWithoutNullStreams | null; output: string; timers: NodeJS.Timeout[] }
@@ -50,7 +51,7 @@ export class CodexLogin {
   async start(): Promise<SignInFlow> {
     if (this.flow?.status.phase === 'waiting') return { ...this.flow.status };
     const cli = this.o.cli();
-    if (!cli) throw new Error('这台电脑上没有 Codex 程序。在 agent 名单里装上 Codex 再登录。');
+    if (!cli) throw new Error(tr('这台电脑上没有 Codex 程序。在 agent 名单里装上 Codex 再登录。'));
     const env = { ...this.o.env(), ...(cli.env ?? {}), NO_COLOR: '1' };
     // Never replace a working sign-in because the button was clicked again.
     if (await codexStatus(cli, env) === 'in') return { phase: 'succeeded', flowId: randomUUID(), url: null, message: null };
@@ -59,18 +60,18 @@ export class CodexLogin {
     this.flow = flow;
     return new Promise<SignInFlow>(resolve => {
       const ready = () => resolve({ ...flow.status });
-      flow.timers.push(setTimeout(() => { this.finish(flow, 'failed', 'Codex 没有及时给出登录网址。确认它装好了、能联网，再试一次。'); ready(); }, this.o.linkTimeoutMs ?? 30_000));
-      flow.timers.push(setTimeout(() => this.finish(flow, 'expired', '登录代码过期了，重新点"去登录"。'), this.o.lifetimeMs ?? 15 * 60_000));
+      flow.timers.push(setTimeout(() => { this.finish(flow, 'failed', tr('Codex 没有及时给出登录网址。确认它装好了、能联网，再试一次。')); ready(); }, this.o.linkTimeoutMs ?? 30_000));
+      flow.timers.push(setTimeout(() => this.finish(flow, 'expired', tr('登录代码过期了，重新点"去登录"。')), this.o.lifetimeMs ?? 15 * 60_000));
       let child: ChildProcessWithoutNullStreams;
       try {
         child = spawn(cli.command, [...cli.args, 'login', '--device-auth'], { env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
       } catch {
-        this.finish(flow, 'failed', 'Codex 启动不了。'); ready(); return;
+        this.finish(flow, 'failed', tr('Codex 启动不了。')); ready(); return;
       }
       flow.child = child;
       const receive = (chunk: Buffer) => {
         if (flow.status.phase !== 'waiting') return;
-        if (flow.output.length + chunk.length > MAX_OUTPUT) { this.finish(flow, 'failed', 'Codex 的回应看不懂，更新它再试。'); ready(); return; }
+        if (flow.output.length + chunk.length > MAX_OUTPUT) { this.finish(flow, 'failed', tr('Codex 的回应看不懂，更新它再试。')); ready(); return; }
         flow.output += chunk.toString('utf8');
         if (flow.status.url) return;
         const p = codexDevicePrompt(flow.output);
@@ -81,7 +82,7 @@ export class CodexLogin {
       };
       child.stdout.on('data', receive);
       child.stderr.on('data', receive);
-      child.once('error', () => { this.finish(flow, 'failed', 'Codex 启动不了。'); ready(); });
+      child.once('error', () => { this.finish(flow, 'failed', tr('Codex 启动不了。')); ready(); });
       child.once('close', () => {
         if (flow.child === child) flow.child = null;
         if (flow.status.phase !== 'waiting') return;
@@ -96,11 +97,11 @@ export class CodexLogin {
   }
 
   /** Codex's sign-in needs no code pasted back: the person types it on OpenAI's page. */
-  complete(): SignInFlow { throw new Error('Codex 登录不用在这里贴代码：在打开的网页上输入上面那串代码就行。'); }
+  complete(): SignInFlow { throw new Error(tr('Codex 登录不用在这里贴代码：在打开的网页上输入上面那串代码就行。')); }
 
   current(flowId: string): SignInFlow | null { return this.flow?.status.flowId === flowId ? { ...this.flow.status } : null; }
 
-  cancel(): void { if (this.flow) this.finish(this.flow, 'cancelled', '已取消。'); }
+  cancel(): void { if (this.flow) this.finish(this.flow, 'cancelled', tr('已取消。')); }
 
   private finish(flow: Flow, phase: Exclude<SignInFlow['phase'], 'waiting'>, message?: string): void {
     if (flow.status.phase !== 'waiting') return;

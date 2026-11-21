@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n';
 import type { DoneReport } from '../../shared/v8/tickets';
 import type { Scheduler } from './scheduler';
 import type { Activity, Dispatcher } from './dispatcher';
@@ -15,13 +16,15 @@ import { REVIEW_NUDGE, REVIEW_SYSTEM, REVIEW_TOOL, reviewBrief } from './prompts
 
 export interface ReviewerOptions {
   model: string | null;
+  /** Gives up on a review after this long (default 20 min): the ticket goes to the boss unreviewed. */
+  timeoutMs?: number;
+  /** After the verdict, how long to wait for the turn to settle so its cost is counted (default 15 s). */
+  settleGraceMs?: number;
   /** The ticket's directory (the review runs there, though it has no tools to touch it). */
   cwd(ticketId: number): string;
   /** Everything the gremlin changed in its directory, as a diff. */
   diff(ticketId: number): string;
   onCost?(usd: number, basis: import('./shell').CostBasis): void;
-  /** The supply session mark for one review (v8 计划书 S1.5). */
-  supplySession?(ticketId: number): string;
 }
 
 export class Reviewer {
@@ -67,31 +70,42 @@ export class Reviewer {
     this.dispatcher.announce({ type: 'reviewing', ticketId });
     let session: ShellSession;
     try {
-      session = await this.shell.open({ role: 'reviewer', cwd: this.o.cwd(ticketId), model: this.o.model, sessionRef: null, systemPrompt: REVIEW_SYSTEM, hostTools: [REVIEW_TOOL], builtinTools: false, ...(this.o.supplySession ? { supplySession: this.o.supplySession(ticketId) } : {}) });
+      session = await this.shell.open({ role: 'reviewer', cwd: this.o.cwd(ticketId), model: this.o.model, sessionRef: null, systemPrompt: REVIEW_SYSTEM, hostTools: [REVIEW_TOOL], builtinTools: false });
     } catch (err) {
-      return this.finish(ticketId, reportMessageId, null, '开不了审查会话：' + (err instanceof Error ? err.message : String(err)));
+      return this.finish(ticketId, reportMessageId, null, tr('开不了审查会话：') + (err instanceof Error ? err.message : String(err)));
     }
     this.current = session;
     const outcome = await new Promise<{ result: 'passed' | 'rejected' | 'escalated' | 'stale'; reason: string } | { failed: string }>(resolve => {
       let nudged = false, done: { result: 'passed' | 'rejected' | 'escalated' | 'stale'; reason: string } | null = null;
+      // One review that never ends must not hold up every review after it (C3 review, finding 9).
+      const timer = setTimeout(() => { session.abort(); resolve({ failed: tr('审查超时没给结论') }); }, this.o.timeoutMs ?? 20 * 60_000);
+      timer.unref?.();
+      let grace: ReturnType<typeof setTimeout> | null = null;
+      const end = (r: Parameters<typeof resolve>[0]) => { clearTimeout(timer); if (grace) clearTimeout(grace); resolve(r); };
       session.onEvent((e: ShellEvent) => {
         if (e.type === 'cost') { this.o.onCost?.(e.usd, e.basis ?? 'reported'); return; }
         if (e.type === 'approval') { session.respondApproval(e.id, e.tool === REVIEW_TOOL.name); return; }
         if (e.type === 'host_tool') {
-          if (e.name !== REVIEW_TOOL.name || done) { session.respondHostTool(e.id, { ok: false, error: done ? '已经交过结论了。' : '没有这个工具：' + e.name }); return; }
+          if (e.name !== REVIEW_TOOL.name || done) { session.respondHostTool(e.id, { ok: false, error: done ? tr('已经交过结论了。') : tr('没有这个工具：') + e.name }); return; }
           try {
             const args = e.args as { reason?: unknown };
             done = { result: this.scheduler.recordReview(reportMessageId, e.args), reason: typeof args?.reason === 'string' ? args.reason : '' };
-            session.respondHostTool(e.id, { ok: true, text: '结论收到。' });
+            session.respondHostTool(e.id, { ok: true, text: tr('结论收到。') });
+            // The verdict is in and counts now. The turn's bill comes when it settles, so wait for that a little
+            // (B4 rerun: closing at once lost every review's cost), but not forever (C3 review, finding 9).
+            clearTimeout(timer);
+            const verdict = done;
+            grace = setTimeout(() => end(verdict), this.o.settleGraceMs ?? 15_000);
+            grace.unref?.();
           } catch (err) {
-            session.respondHostTool(e.id, { ok: false, error: '结论格式不对（' + (err instanceof Error ? err.message : String(err)) + '）：verdict 用 pass 或 fail，checks 三条都要有，pass 时三条都必须 ok。' });
+            session.respondHostTool(e.id, { ok: false, error: tr('结论格式不对（') + (err instanceof Error ? err.message : String(err)) + tr('）：verdict 用 pass 或 fail，checks 三条都要有，pass 时三条都必须 ok。') });
           }
           return;
         }
         if (e.type === 'settled' || e.type === 'exited') {
-          if (done) return resolve(done);
+          if (done) return end(done);
           if (e.type === 'settled' && e.status === 'completed' && !nudged) { nudged = true; session.prompt(REVIEW_NUDGE); return; }
-          resolve({ failed: e.type === 'exited' ? e.detail : e.status === 'error' ? '出错：' + (e.detail ?? '') : '两次停下都没给结论' });
+          end({ failed: e.type === 'exited' ? e.detail : e.status === 'error' ? tr('出错：') + (e.detail ?? '') : tr('两次停下都没给结论') });
         }
       });
       session.prompt(reviewBrief({ originalRequest: t.originalRequest, bossLater, summary: report.summary, diff: this.o.diff(ticketId), verification: report.verification }));

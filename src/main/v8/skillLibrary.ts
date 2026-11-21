@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { fetchSkillFromSource, toSkillSlug, writeSkillFolder } from './skillFetch';
 import path from 'node:path';
@@ -19,6 +20,7 @@ import type { LibrarySkill, SkillLibraryView } from '../../shared/v8/skills';
  */
 
 interface Kept {
+  /** true on, false off. A skill with no entry: on when it ships with the app (A5), otherwise off. */
   enabled: Record<string, boolean>;
   uses: Record<string, { count: number; last: number }>;
   retold: Record<string, { text: string; agent: string; at: number }>;
@@ -28,7 +30,7 @@ interface Kept {
   sources: Record<string, string>;
 }
 
-interface Found { id: string; name: string; description: string; category: string | null; dir: string; imported: boolean }
+interface Found { id: string; name: string; description: string; category: string | null; dir: string; imported: boolean; builtin: boolean }
 
 const MAX_FILE = 200_000;
 
@@ -69,6 +71,11 @@ export class SkillLibrary {
     stateFile: string;
     /** The app's own folder for skills brought in from GitHub (they can be deleted for real). */
     importRoot?: string;
+    /**
+     * Skills that ship with the app and the ones ego lite brings (A5), read after the other folders: a copy of the
+     * same skill in the boss's own folders wins. These start switched on.
+     */
+    builtinRoots?: () => string[];
     clock?: () => number;
   }) {}
 
@@ -93,9 +100,10 @@ export class SkillLibrary {
     if (!force && this.now() - this.readAt < 5000 && this.found.length) return this.found;
     const out: Found[] = [];
     const removed = this.kept().removed;
-    const roots = [...(this.o.importRoot ? [this.o.importRoot] : []), ...this.o.roots()];
+    const builtin = new Set(this.o.builtinRoots?.() ?? []);
+    const roots = [...(this.o.importRoot ? [this.o.importRoot] : []), ...this.o.roots().filter(r => !builtin.has(r)), ...builtin];
     for (const root of roots) {
-      const imported = root === this.o.importRoot;
+      const imported = root === this.o.importRoot, shipped = builtin.has(root);
       let names: string[];
       try { names = readdirSync(root); } catch { continue; }
       let cats = new Map<string, string>();
@@ -111,7 +119,7 @@ export class SkillLibrary {
         let fm: { name?: string; description?: string } = {};
         try { fm = parseSkillFrontmatter(readFileSync(file, 'utf8').slice(0, 20_000)); } catch { continue; }
         const name = fm.name?.trim() || id;
-        out.push({ id, name, description: (fm.description ?? '').trim(), category: imported ? '从网上导入' : cats.get(name) ?? cats.get(id) ?? null, dir, imported });
+        out.push({ id, name, description: (fm.description ?? '').trim(), category: imported ? tr('从网上导入') : shipped ? tr('自带') : cats.get(name) ?? cats.get(id) ?? null, dir, imported, builtin: shipped });
       }
     }
     this.found = out;
@@ -125,8 +133,8 @@ export class SkillLibrary {
       roots: this.o.roots(),
       skills: this.scan(true).map((s): LibrarySkill => ({
         id: s.id, name: s.name, description: s.description, category: s.category,
-        enabled: k.enabled[s.id] === true, uses: k.uses[s.id]?.count ?? 0, lastUsed: k.uses[s.id]?.last ?? null, retold: k.retold[s.id] ?? null,
-        imported: s.imported, source: k.sources[s.id] ?? null,
+        enabled: on(k, s), uses: k.uses[s.id]?.count ?? 0, lastUsed: k.uses[s.id]?.last ?? null, retold: k.retold[s.id] ?? null,
+        imported: s.imported, source: k.sources[s.id] ?? null, builtin: s.builtin,
       })),
     };
   }
@@ -134,11 +142,11 @@ export class SkillLibrary {
   /** Switch skills on or off. */
   setEnabled(ids: string[], on: boolean): void {
     const k = this.kept();
-    for (const id of ids) { if (on) k.enabled[id] = true; else delete k.enabled[id]; }
+    for (const id of ids) k.enabled[id] = on;
     this.keep(k);
   }
 
-  private enabled(): Found[] { const k = this.kept(); return this.scan().filter(s => k.enabled[s.id] === true); }
+  private enabled(): Found[] { const k = this.kept(); return this.scan().filter(s => on(k, s)); }
 
   /** The switched-on skills that fit a piece of work, best first. Everything switched on when `about` is empty. */
   fitting(about: string, max = 8): Array<{ name: string; description: string }> {
@@ -165,21 +173,21 @@ export class SkillLibrary {
     const a = (args && typeof args === 'object' ? args : {}) as { about?: unknown; name?: unknown; file?: unknown };
     if (name === 'list_skills') {
       const list = this.fitting(typeof a.about === 'string' ? a.about : '', 40);
-      return { ok: true, text: list.length ? list.map(s => `- ${s.name}：${s.description}`).join('\n') : '技能库里没有对得上的技能。' };
+      return { ok: true, text: list.length ? list.map(s => tr('- {0}：{1}', [s.name, s.description])).join('\n') : tr('技能库里没有对得上的技能。') };
     }
-    if (name !== 'use_skill') return { ok: false, error: '没有这个工具：' + name };
+    if (name !== 'use_skill') return { ok: false, error: tr('没有这个工具：') + name };
     const wanted = typeof a.name === 'string' ? a.name.trim() : '';
     const s = this.enabled().find(x => x.name === wanted || x.id === wanted);
-    if (!s) return { ok: false, error: `技能库里没有能用的「${wanted}」。用 list_skills 看有哪些。` };
+    if (!s) return { ok: false, error: tr('技能库里没有能用的「{0}」。用 list_skills 看有哪些。', [wanted]) };
     const files = otherFiles(s.dir);
     let text: string;
     if (typeof a.file === 'string' && a.file.trim()) {
       const rel = a.file.replace(/\\/g, '/').replace(/^\/+/, '');
-      if (!files.includes(rel)) return { ok: false, error: `技能「${s.name}」里没有 ${rel}。有这些：${files.join('，') || '没有别的文件'}` };
+      if (!files.includes(rel)) return { ok: false, error: tr('技能「{0}」里没有 {1}。有这些：{2}', [s.name, rel, files.join(tr('，')) || tr('没有别的文件')]) };
       text = readFileSync(path.join(s.dir, rel), 'utf8').slice(0, MAX_FILE);
     } else {
       text = readFileSync(path.join(s.dir, 'SKILL.md'), 'utf8').slice(0, MAX_FILE);
-      if (files.length) text += `\n\n---\n这个技能的文件夹里还有：${files.slice(0, 60).join('，')}。要看哪个，用 use_skill 带 file 取。`;
+      if (files.length) text += tr('\n\n---\n这个技能的文件夹里还有：{0}。要看哪个，用 use_skill 带 file 取。', [files.slice(0, 60).join(tr('，'))]);
     }
     const k = this.kept();
     k.uses[s.id] = { count: (k.uses[s.id]?.count ?? 0) + 1, last: this.now() };
@@ -225,7 +233,7 @@ export class SkillLibrary {
    * They land in the app's own folder, switched off until the boss switches them on (requirement 49).
    */
   async importFrom(link: string, fetcher: typeof fetch = fetch): Promise<{ added: string[]; skipped: string[] } | { error: string }> {
-    if (!this.o.importRoot) return { error: '这个技能库没有导入用的文件夹' };
+    if (!this.o.importRoot) return { error: tr('这个技能库没有导入用的文件夹') };
     const got = await fetchSkillFromSource(link, fetcher);
     if ('error' in got) return got;
     mkdirSync(this.o.importRoot, { recursive: true });
@@ -243,7 +251,7 @@ export class SkillLibrary {
       taken.add(id);
       k.sources[id] = skill.source;
       added.push(fm.name || id);
-      skipped.push(...skill.skipped.map(x => x.path || 'SKILL.md 之外的文件'));
+      skipped.push(...skill.skipped.map(x => x.path || tr('SKILL.md 之外的文件')));
     }
     this.keep(k);
     this.scan(true);
@@ -256,6 +264,9 @@ export class SkillLibrary {
     this.keep(k);
   }
 }
+
+/** Switched on: what the boss chose, else on for a skill that ships with the app. */
+function on(k: Kept, s: Found): boolean { return k.enabled[s.id] ?? s.builtin; }
 
 function oneLine(s: string): string { return s.replace(/\s+/g, ' ').trim().slice(0, 240); }
 

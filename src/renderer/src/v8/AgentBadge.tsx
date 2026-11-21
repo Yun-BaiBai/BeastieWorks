@@ -1,3 +1,4 @@
+import { tr } from '@shared/i18n';
 import { BRAND_MARKS, type BrandMark } from './brandMarks';
 
 /**
@@ -10,9 +11,9 @@ interface Provider { key: string; name: string; mark: BrandMark | null; letters:
 const LETTERED: Record<string, Omit<Provider, 'key' | 'mark'>> = {
   deepseek: { name: 'DeepSeek', letters: 'DS', color: '#4d6bfe' },
   moonshot: { name: 'Kimi', letters: 'K', color: '#15120f' },
-  zhipu: { name: '智谱', letters: '智', color: '#3859ff' },
+  zhipu: { name: tr('智谱'), letters: tr('智'), color: '#3859ff' },
   openrouter: { name: 'OpenRouter', letters: 'OR', color: '#6467f2' },
-  unknown: { name: '模型', letters: '?', color: '#8a7c68' },
+  unknown: { name: tr('模型'), letters: '?', color: '#8a7c68' },
 };
 
 /** "openai/gpt-5.4-mini", "anthropic/claude-…", "deepseek-chat", "qwen3-coder" … → the provider. */
@@ -50,16 +51,16 @@ export function ProviderMark({ model, size = 16 }: { model: string | null; size?
 }
 
 /** The detail-card block: harness and model, each with its badge. */
-export function AgentBadge({ harness, model }: { harness: { kind: 'omp' | 'fake' | 'acp'; label: string }; model: string | null }) {
+export function AgentBadge({ harness, model }: { harness: { kind: 'fake' | 'acp'; label: string }; model: string | null }) {
   const p = providerOf(model);
   return <div className="v8-agent">
     <div className="v8-agent-row">
-      <span className="v8-mark v8-mark-harness" style={{ width: 34, height: 34 }} aria-hidden="true"><b>{harness.kind === 'omp' ? 'π' : harness.kind === 'acp' ? '本' : '演'}</b></span>
-      <div><span className="v8-cap">外壳</span><b>{harness.label}</b></div>
+      <span className="v8-mark v8-mark-harness" style={{ width: 34, height: 34 }} aria-hidden="true"><b>{harness.kind === 'acp' ? tr('本') : tr('演')}</b></span>
+      <div><span className="v8-cap">{tr('外壳')}</span><b>{harness.label}</b></div>
     </div>
     <div className="v8-agent-row">
       <ProviderMark model={model} size={34} />
-      <div><span className="v8-cap">{p.key === 'unknown' ? '模型' : '模型 · ' + p.name}</span><b className="v8-agent-model">{model ?? '默认模型'}</b></div>
+      <div><span className="v8-cap">{p.key === 'unknown' ? tr('模型') : tr('模型 · ') + p.name}</span><b className="v8-agent-model">{model ?? tr('默认模型')}</b></div>
     </div>
   </div>;
 }

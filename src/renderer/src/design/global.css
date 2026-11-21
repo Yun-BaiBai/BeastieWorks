@@ -181,6 +181,13 @@ canvas, img, svg { image-rendering: pixelated; image-rendering: crisp-edges; }
   50%, 100% { transform: scale(0.7); }
 }
 
+/* Day/night cross-fade (theme.ts withViewTransition), timing copied from OpenMausBot's styles.css. Only while the
+ * theme changes (data-cth-theme-fade): page changes keep their own transition (v8.css). */
+:root[data-cth-theme-fade]::view-transition-old(root) { animation: cth-theme-out 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
+:root[data-cth-theme-fade]::view-transition-new(root) { animation: cth-theme-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes cth-theme-out { to { opacity: 0; } }
+@keyframes cth-theme-in { from { opacity: 0; } }
+
 /* Reduce motion */
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0s !important; transition-duration: 0s !important; }

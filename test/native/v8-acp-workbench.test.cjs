@@ -74,6 +74,14 @@ test('permission requests are described the way the approval rule reads them', (
   assert.deepEqual(describePermission({ kind: 'execute', title: 'Run', rawInput: { command: ['powershell.exe', '-Command', 'npm test'] } }), { tool: 'bash', detail: 'Run\nCommand: npm test' });
   assert.deepEqual(describePermission({ kind: 'other', title: 'x', rawInput: { command: 'bash -lc "git status"' } }), { tool: 'bash', detail: 'x\nCommand: git status' });
   assert.deepEqual(describePermission({ kind: 'edit', title: 'Edit', rawInput: { changes: { 'D:/w/b.txt': {} } } }), { tool: 'edit', detail: 'Edit\nPath: D:/w/b.txt' });
+  // Antigravity's own field names (Orca acp-dialects/antigravity-dialect.ts), first real Antigravity ticket 2026-11-21.
+  const agy = describePermission({ kind: 'execute', title: 'run_command', rawInput: { CommandLine: 'npm test', Cwd: 'D:/w' } });
+  assert.deepEqual(agy, { tool: 'bash', detail: 'run_command\nCommand: npm test\nCwd: D:/w' });
+  const { directoryPolicy } = load('src/main/v8/approval.ts');
+  const allow = directoryPolicy({ workdir: () => 'D:/w' });
+  assert.equal(allow({ ticketId: 1, tool: agy.tool, detail: agy.detail }), true, 'npm test in the ticket folder is allowed');
+  const away = describePermission({ kind: 'execute', title: 'run_command', rawInput: { CommandLine: 'npm test', Cwd: 'D:/elsewhere' } });
+  assert.equal(allow({ ticketId: 1, tool: away.tool, detail: away.detail }), false, 'run from another folder it is not');
 });
 
 test('a role whose agent cannot be started says so instead of hanging', async t => {

@@ -1,3 +1,4 @@
+import { tr } from '@shared/i18n';
 import { leadName } from '../leadName';
 import { moneyText } from '@shared/v8/board';
 import './board.css';
@@ -8,6 +9,7 @@ import { TICKET_STATE_LABEL, type TicketView } from '@shared/v8/tickets';
 import { art, poseFor, slotCast, type AnyPose } from '../gremlins';
 import { ProviderMark } from '../AgentBadge';
 import { HERO_NAME, type Door, type HeroKey } from '../views';
+import { MicButton } from '../MicButton';
 
 /** The hero name sits on exactly one board gremlin while a page change runs. */
 const heroStyle = (heroKey: HeroKey | null, key: HeroKey) => (heroKey === key ? { viewTransitionName: HERO_NAME } : undefined);
@@ -37,37 +39,47 @@ export interface BoardProps {
   data: BoardData;
   onSay(text: string): void;
   onAnswer(ticketId: number, optionId: string): void;
+  /** 圆桌会议 (A6): the boss picks Plan A or B. */
+  onPick?(roundtableId: number, which: 'A' | 'B'): void;
+  /** 工序链 (A15): the boss starts the next stage. */
+  onNextStage?(chainId: number): void;
+  /** 拆解 (A12): the boss decides. */
+  onSplit?(id: number, how: 'split' | 'whole'): void;
   /** Opens a local page. Absent: the board is not clickable. */
   open?: Door;
   /** Which board gremlin carries the transition name right now. */
   heroKey?: HeroKey | null;
 }
 
-export function Board({ data, onSay, onAnswer, open, heroKey = null }: BoardProps) {
+export function Board({ data, onSay, onAnswer, onPick, onNextStage, onSplit, open, heroKey = null }: BoardProps) {
   const working = data.slots.filter(s => s.ticket);
   const reporting = data.slots.some(s => s.reporting);
   const hub = door(open, () => open?.({ kind: 'lead' }, 'lead'));
   return (
     <>
-      <section className="v8-stage" aria-label="调度台">
+      <section className="v8-stage" aria-label={tr('调度台')}>
         <div className="v8-dots" />
         <Wires data={data} />
         <Packets data={data} />
         <Flow data={data} />
         <div {...hub} className={'v8-hub' + hub.className} aria-label={leadName()}>
           <img className="v8-g" src={art('boss', data.waiting.length ? 'pointing' : 'listening')} alt="" style={heroStyle(heroKey, 'lead')} />
-          <div className="v8-plate"><i />{leadName()}在线 · 随时回话<ProviderMark model={data.agents.lead} size={15} /></div>
+          <div className="v8-plate"><i />{leadName()}{tr('在线 · 随时回话')}<ProviderMark model={data.agents.lead} size={15} /></div>
         </div>
         {data.slots.slice(0, 2).map((s, i) => <SlotCard key={s.slot.id} s={s} pos={SLOT_POS[i]} now={data.now} open={open} heroKey={heroKey} />)}
+        {/* Desks past the two drawn ones: every one reachable (C3 review, finding 15). */}
+        {data.slots.length > 2 && <div className="v8-moreslots"><span className="v8-cap">{tr('另外 {0} 个工位', [data.slots.length - 2])}</span>
+          {data.slots.slice(2).map(s => <button key={s.slot.id} type="button" className={'v8-chip' + (s.ticket ? ' is-on' : '')} onClick={() => open?.({ kind: 'slot', slotId: s.slot.id }, null)}>
+            {s.slot.label}{s.ticket ? tr('：') + s.ticket.title.slice(0, 10) : tr(' · 空着')}</button>)}</div>}
         <ReviewCard review={data.review} agents={data.agents} open={open} heroKey={heroKey} />
         {data.emergency && <EmergencyCard s={data.emergency} now={data.now} open={open} heroKey={heroKey} />}
         <QueueNotes queue={data.queue} resting={data.resting} now={data.now} open={open} />
         {data.waiting.length > 0 && <WaitingCard waiting={data.waiting} open={open} heroKey={heroKey} />}
-        <span className="v8-sr-only" aria-live="polite">{working.length} 个工位在干活{reporting ? '，有小怪正在汇报' : ''}</span>
+        <span className="v8-sr-only" aria-live="polite">{working.length} {tr(' 个工位在干活')}{reporting ? tr('，有小怪正在汇报') : ''}</span>
       </section>
       <section className="v8-bottom">
         <Feed data={data} open={open} />
-        <TalkBar data={data} onSay={onSay} onAnswer={onAnswer} />
+        <TalkBar data={data} onSay={onSay} onAnswer={onAnswer} {...(onPick ? { onPick } : {})} {...(onNextStage ? { onNextStage } : {})} {...(onSplit ? { onSplit } : {})} />
       </section>
     </>
   );
@@ -138,21 +150,21 @@ function Flow({ data }: { data: BoardData }) {
   const reviewing = data.review.current ? 1 : 0;
   const yours = data.waiting.length;
   const steps = [
-    { key: 'queue', label: '排队', n: data.queue.length },
-    { key: 'work', label: '干活', n: working },
-    { key: 'review', label: '审查', n: reviewing },
-    { key: 'you', label: '等你', n: yours },
-    { key: 'done', label: '完成', n: data.done },
+    { key: 'queue', label: tr('排队'), n: data.queue.length },
+    { key: 'work', label: tr('干活'), n: working },
+    { key: 'review', label: tr('审查'), n: reviewing },
+    { key: 'you', label: tr('等你'), n: yours },
+    { key: 'done', label: tr('完成'), n: data.done },
   ];
   const top = Math.max(1, ...steps.map(s => s.n));
   const count = (m: RingMark) => data.ring.filter(r => r === m).length;
   const legend = [
-    { key: 'event', label: '小怪动作', n: count('event'), color: 'var(--ink3)' },
-    { key: 'waiting', label: '交给你', n: count('waiting'), color: 'var(--amber)' },
-    { key: 'passed', label: '审查通过', n: count('passed'), color: 'var(--moss)' },
-    { key: 'refused', label: '审查打回', n: count('refused'), color: 'var(--brick)' },
+    { key: 'event', label: tr('小怪动作'), n: count('event'), color: 'var(--ink3)' },
+    { key: 'waiting', label: tr('交给你'), n: count('waiting'), color: 'var(--amber)' },
+    { key: 'passed', label: tr('审查通过'), n: count('passed'), color: 'var(--moss)' },
+    { key: 'refused', label: tr('审查打回'), n: count('refused'), color: 'var(--brick)' },
   ];
-  const tool = (s: BoardSlot | undefined) => !s?.ticket ? '空闲' : s.reporting ? '交报告' : clip(s.live ?? '想事情', 18);
+  const tool = (s: BoardSlot | undefined) => !s?.ticket ? tr('空闲') : s.reporting ? tr('交报告') : clip(s.live ?? tr('想事情'), 18);
   function clip(t: string, n: number) { const v = t.replace(/\s+/g, ' ').trim(); return v.length > n ? v.slice(0, n - 1) + '…' : v; }
   // Halfway along the visible part of the wire (it leaves the hub at radius 176), so the hub never covers a label.
   const mid = (k: keyof typeof ENDS, dx = 0, dy = 0) => {
@@ -160,28 +172,28 @@ function Flow({ data }: { data: BoardData }) {
     return { left: HUB.x + (x - HUB.x) * t + dx, top: HUB.y + (y - HUB.y) * t + dy };
   };
   const labels: Array<{ key: string; at: { left: number; top: number }; text: string; hot?: boolean }> = [
-    { key: 'slot0', at: mid('slot0', 14, 16), text: (data.slots[0]?.slot.label ?? '工位') + ' · ' + tool(data.slots[0]), hot: !!data.slots[0]?.ticket },
+    { key: 'slot0', at: mid('slot0', 14, 16), text: (data.slots[0]?.slot.label ?? tr('工位')) + ' · ' + tool(data.slots[0]), hot: !!data.slots[0]?.ticket },
     ...(data.slots[1] ? [{ key: 'slot1', at: mid('slot1', -20, -8), text: data.slots[1].slot.label + ' · ' + tool(data.slots[1]), hot: !!data.slots[1].ticket }] : []),
-    { key: 'queue', at: mid('queue', -30, 12), text: `派活 ← 排队 ${data.queue.length}` },
-    { key: 'review', at: mid('review', 0, -16), text: data.review.enabled ? `审查 · 过 ${data.review.passedToday}` : '审查没开', hot: !!data.review.current },
-    { key: 'waiting', at: mid('waiting', -24, -14), text: `交给你 ${yours}`, hot: yours > 0 },
+    { key: 'queue', at: mid('queue', -30, 12), text: tr('派活 ← 排队 {0}', [data.queue.length]) },
+    { key: 'review', at: mid('review', 0, -16), text: data.review.enabled ? tr('审查 · 过 {0}', [data.review.passedToday]) : tr('审查没开'), hot: !!data.review.current },
+    { key: 'waiting', at: mid('waiting', -24, -14), text: tr('交给你 {0}', [yours]), hot: yours > 0 },
   ];
   return <>
-    <div className="v8-pipe" aria-label="工单流水线">
-      <span className="v8-pipe-cap">工单流水线 · 实时</span>
+    <div className="v8-pipe" aria-label={tr('工单流水线')}>
+      <span className="v8-pipe-cap">{tr('工单流水线 · 实时')}</span>
       <ol>{steps.map((s, i) => <li key={s.key} className={s.n ? 'is-on' : ''}>
         {i > 0 && <i className="v8-pipe-arrow" aria-hidden="true" />}
         <b>{s.n}</b><span>{s.label}</span><em style={{ width: `${(s.n / top) * 100}%` }} />
       </li>)}</ol>
     </div>
     {labels.map(l => <span key={l.key} className={'v8-wlabel' + (l.hot ? ' is-hot' : '')} style={l.at}>{l.text}</span>)}
-    <div className="v8-legend" aria-label="圆环图例">
-      <span className="v8-pipe-cap">圆环 · 今天每件事一格</span>
+    <div className="v8-legend" aria-label={tr('圆环图例')}>
+      <span className="v8-pipe-cap">{tr('圆环 · 今天每件事一格')}</span>
       <ul>{legend.map(g => <li key={g.key}><i style={{ background: g.color }} />{g.label}<b>{g.n}</b></li>)}</ul>
     </div>
-    {data.slots.length < 2 && <div className="v8-ghost" aria-label="工位 02 没开">
-      <span className="v8-pipe-cap">工位 02 · 没开</span>
-      <p>现在只开了 {data.slots.length} 个工位，同一时间只有一只小怪干活。设置里最多能开 4 个。</p>
+    {data.slots.length < 2 && <div className="v8-ghost" aria-label={tr('工位 02 没开')}>
+      <span className="v8-pipe-cap">{tr('工位 02 · 没开')}</span>
+      <p>{tr('现在只开了 ')}{data.slots.length} {tr(' 个工位，同一时间只有一只小怪干活。设置里最多能开 4 个。')}</p>
     </div>}
   </>;
 }
@@ -194,10 +206,10 @@ function SlotCard({ s, pos, now, open, heroKey, compact = false }: { s: BoardSlo
   const t = s.ticket;
   const head = `${s.slot.label}${s.slot.model ? ' · ' + s.slot.model : ''}`;
   if (!t) {
-    return <article className="v8-card v8-sticker is-empty" style={pos} aria-label={head + ' · 空着'}>
+    return <article className="v8-card v8-sticker is-empty" style={pos} aria-label={head + tr(' · 空着')}>
       <img className="v8-g" src={art(slotCast(s.order), 'long_wait')} alt="" />
-      <div className="v8-row"><span className="v8-cap">{head}</span><span className="v8-pill">空着</span></div>
-      <h3>没有活，等下一张工单</h3>
+      <div className="v8-row"><span className="v8-cap">{head}</span><span className="v8-pill">{tr('空着')}</span></div>
+      <h3>{tr('没有活，等下一张工单')}</h3>
     </article>;
   }
   const key = 'slot:' + s.slot.id;
@@ -205,12 +217,12 @@ function SlotCard({ s, pos, now, open, heroKey, compact = false }: { s: BoardSlo
   return (
     <article {...d} className={'v8-card v8-sticker is-work' + (compact ? ' is-compact' : '') + d.className} style={pos} aria-label={`${head} · ${t.title}`}>
       <img className="v8-g" src={art(slotCast(s.order), poseFor(t.state, s.phase))} alt="" style={heroStyle(heroKey, key)} />
-      {s.reporting && <span className="v8-tag">正在汇报</span>}
-      <div className="v8-row"><span className="v8-cap v8-cap-agent"><ProviderMark model={s.slot.model} size={15} />{head}</span><span className="v8-pill is-go">{s.phase === 'checking' ? '在验证' : '在干活'}</span></div>
+      {s.reporting && <span className="v8-tag">{tr('正在汇报')}</span>}
+      <div className="v8-row"><span className="v8-cap v8-cap-agent"><ProviderMark model={s.slot.model} size={15} />{head}</span><span className="v8-pill is-go">{s.phase === 'checking' ? tr('在验证') : tr('在干活')}</span></div>
       <h3>{t.title}</h3>
       {s.live && <div className="v8-say-bubble" aria-live="polite"><span className={s.phase === 'working' ? 'is-typing' : ''}>{s.live}</span></div>}
-      {compact ? null : s.recent.length > 0 ? <ol className="v8-recent">{s.recent.map((r, i) => <li key={i}>{r}</li>)}</ol> : <div className="v8-live">{s.live ?? '刚开工'}</div>}
-      <div className="v8-bars" title={WORK_STEPS.map((n, i) => (i < s.step ? '✓ ' : i === s.step ? '▶ ' : '') + n).join('　')}>
+      {compact ? null : s.recent.length > 0 ? <ol className="v8-recent">{s.recent.map((r, i) => <li key={i}>{r}</li>)}</ol> : <div className="v8-live">{s.live ?? tr('刚开工')}</div>}
+      <div className="v8-bars" title={WORK_STEPS.map((n, i) => (i < s.step ? '✓ ' : i === s.step ? '▶ ' : '') + n).join(tr('　'))}>
         {WORK_STEPS.map((n, i) => <i key={n} className={i < s.step ? 'is-on' : i === s.step ? 'is-now' : ''} />)}
         <span>{s.startedAt ? clock(now - s.startedAt) : '--:--'} · {moneyText(s.costUsd, s.costSure)}</span>
       </div>
@@ -221,54 +233,54 @@ function SlotCard({ s, pos, now, open, heroKey, compact = false }: { s: BoardSlo
 function EmergencyCard({ s, now, open, heroKey }: { s: BoardSlot; now: number } & DoorProps) {
   // Compact (no recent-actions list) so it clears the queue notes below it.
   if (s.ticket) return <SlotCard s={s} pos={{ left: 122, top: 292 }} now={now} open={open} heroKey={heroKey} compact />;
-  return <article className="v8-card v8-sticker is-empty" style={{ left: 122, top: 292 }} aria-label="应急名额 · 空着">
+  return <article className="v8-card v8-sticker is-empty" style={{ left: 122, top: 292 }} aria-label={tr('应急名额 · 空着')}>
     <img className="v8-g" src={art('tri', 'long_wait')} alt="" />
-    <div className="v8-row"><span className="v8-cap">应急名额</span><span className="v8-pill">空着</span></div>
-    <h3>留给你临时插话的那张</h3>
+    <div className="v8-row"><span className="v8-cap">{tr('应急名额')}</span><span className="v8-pill">{tr('空着')}</span></div>
+    <h3>{tr('留给你临时插话的那张')}</h3>
   </article>;
 }
 
 function ReviewCard({ review, agents, open, heroKey }: { review: BoardData['review']; agents: BoardData['agents'] } & DoorProps) {
   const d = door(open, () => open?.({ kind: 'review' }, 'review'));
-  return <article {...d} className={'v8-card v8-sticker' + d.className} style={{ left: 1050, top: 316 }} aria-label="审查">
+  return <article {...d} className={'v8-card v8-sticker' + d.className} style={{ left: 1050, top: 316 }} aria-label={tr('审查')}>
     <img className="v8-g" src={art('lanky', review.current ? 'reading' : 'idle')} alt="" style={heroStyle(heroKey, 'review')} />
-    {review.current && <span className="v8-tag">正在审</span>}
-    <div className="v8-row"><span className="v8-cap v8-cap-agent"><ProviderMark model={agents.review} size={15} />审查 · 全新上下文</span>{review.enabled && <span className="v8-pill is-ok">通过 {review.passedToday}</span>}</div>
-    <h3>{!review.enabled ? '审查没开' : review.current ? review.current : '对照你的原话验收'}</h3>
-    <div className={'v8-live' + (review.current ? ' is-typing' : '')}>{!review.enabled ? '做完的活直接交给你看' : review.current ? '对照原话、改动和验证输出' : review.lastPassed ? '刚通过：' + review.lastPassed : '今天还没有要审的'}</div>
+    {review.current && <span className="v8-tag">{tr('正在审')}</span>}
+    <div className="v8-row"><span className="v8-cap v8-cap-agent"><ProviderMark model={agents.review} size={15} />{tr('审查 · 全新上下文')}</span>{review.enabled && <span className="v8-pill is-ok">{tr('通过 ')}{review.passedToday}</span>}</div>
+    <h3>{!review.enabled ? tr('审查没开') : review.current ? review.current : tr('对照你的原话验收')}</h3>
+    <div className={'v8-live' + (review.current ? ' is-typing' : '')}>{!review.enabled ? tr('做完的活直接交给你看') : review.current ? tr('对照原话、改动和验证结果') : review.lastPassed ? tr('刚通过：') + review.lastPassed : tr('今天还没有要审的')}</div>
   </article>;
 }
 
 /** When a ticket waiting for quota goes on: a clock time and minutes left, or "unknown". */
 function backAt(t: TicketView, now: number): string {
   const at = t.quotaWait?.resetsAt;
-  if (!at) return '恢复时间不知道';
+  if (!at) return tr('恢复时间不知道');
   const min = Math.max(0, Math.ceil((at - now) / 60_000));
-  return new Date(at).toTimeString().slice(0, 5) + ' 恢复 · 还有 ' + (min >= 60 ? Math.floor(min / 60) + ' 小时 ' + (min % 60) + ' 分' : min + ' 分');
+  return new Date(at).toTimeString().slice(0, 5) + tr(' 恢复 · 还有 ') + (min >= 60 ? Math.floor(min / 60) + tr(' 小时 ') + (min % 60) + tr(' 分') : min + tr(' 分'));
 }
 
 function QueueNotes({ queue, resting, now, open }: { queue: TicketView[]; resting: TicketView[]; now: number; open?: Door }) {
   const d = door(open, () => open?.({ kind: 'queue' }, null));
   // Tickets waiting for quota come first (they were already under way), each with a sleeping gremlin and its time.
   const notes = [...resting.map(t => ({ t, rest: true })), ...queue.map(t => ({ t, rest: false }))];
-  const cap = [queue.length ? `排队 ${queue.length} · 先来先做` : '没有排队的工单', resting.length ? `等额度 ${resting.length}` : ''].filter(Boolean).join(' · ');
+  const cap = [queue.length ? tr('排队 {0} · 先来先做', [queue.length]) : tr('没有排队的工单'), resting.length ? tr('等额度 {0}', [resting.length]) : ''].filter(Boolean).join(' · ');
   return <div className="v8-queue">
     <span className="v8-cap" style={{ left: 266, top: 426 }}>{cap}</span>
     {notes.slice(0, 3).map(({ t, rest }, i) => <div key={t.id} {...d} className={'v8-note' + (rest ? ' is-resting' : '') + d.className}
-      aria-label={rest ? `等额度 · ${t.title} · ${backAt(t, now)}` : `排队 ${i + 1 - resting.length} · ${t.title}`}
+      aria-label={rest ? tr('等额度 · {0} · {1}', [t.title, backAt(t, now)]) : tr('排队 {0} · {1}', [i + 1 - resting.length, t.title])}
       style={{ left: NOTE_POS[i].left, top: NOTE_POS[i].top, transform: `rotate(${NOTE_POS[i].turn}deg)` }}>
-      {rest ? <><img className="v8-g v8-note-zz" src={art('tri', 'waiting_quota')} alt="" /><small>等额度</small>{t.title}<em>{backAt(t, now)}</em></>
+      {rest ? <><img className="v8-g v8-note-zz" src={art('tri', 'waiting_quota')} alt="" /><small>{tr('等额度')}</small>{t.title}<em>{backAt(t, now)}</em></>
         : <><small>{String(i + 1 - resting.length).padStart(2, '0')}</small>{t.title}</>}
     </div>)}
-    {notes.length > 3 && <span className="v8-cap" style={{ left: 266, top: 552 }}>还有 {notes.length - 3} 张</span>}
+    {notes.length > 3 && <span className="v8-cap" style={{ left: 266, top: 552 }}>{tr('还有 ')}{notes.length - 3} {tr(' 张')}</span>}
   </div>;
 }
 
 const WAIT_TEXT: Partial<Record<TicketView['state'], { cap: string; pose: AnyPose; act: string }>> = {
-  REVIEW: { cap: '等你看', pose: 'reporting', act: '看结果' },
-  ANSWER: { cap: '等你回答', pose: 'held', act: '去回答' },
-  BLOCKED: { cap: '卡住了', pose: 'stuck', act: '看看卡在哪' },
-  FAILED: { cap: '失败了', pose: 'stalled', act: '看看原因' },
+  REVIEW: { cap: tr('等你看'), pose: 'reporting', act: tr('看结果') },
+  ANSWER: { cap: tr('等你回答'), pose: 'held', act: tr('去回答') },
+  BLOCKED: { cap: tr('卡住了'), pose: 'stuck', act: tr('看看卡在哪') },
+  FAILED: { cap: tr('失败了'), pose: 'stalled', act: tr('看看原因') },
 };
 
 function WaitingCard({ waiting, open, heroKey }: { waiting: TicketView[] } & DoorProps) {
@@ -279,9 +291,9 @@ function WaitingCard({ waiting, open, heroKey }: { waiting: TicketView[] } & Doo
   const go = () => open?.(t.state === 'REVIEW' ? { kind: 'delivery', ticketId: t.id } : { kind: 'lead' }, key);
   return <article className="v8-card v8-sticker is-you" style={{ left: 936, top: 452 }} aria-label={w.cap + ' · ' + t.title}>
     <img className="v8-g" src={art('alien', w.pose)} alt="" style={heroStyle(heroKey, key)} />
-    <div className="v8-row"><span className="v8-cap">{w.cap}{waiting.length > 1 ? ` · 还有 ${waiting.length - 1} 件` : ''}</span><span className="v8-pill">{TICKET_STATE_LABEL[t.state]}</span></div>
+    <div className="v8-row"><span className="v8-cap">{w.cap}{waiting.length > 1 ? tr(' · 还有 {0} 件', [waiting.length - 1]) : ''}</span><span className="v8-pill">{TICKET_STATE_LABEL[t.state]}</span></div>
     <h3>{t.title}</h3>
-    <div className="v8-btns"><button type="button" className="v8-btn" onClick={go}>{w.act}</button>{t.state === 'REVIEW' && <button type="button" className="v8-btn is-ghost" onClick={go}>打回重做</button>}</div>
+    <div className="v8-btns"><button type="button" className="v8-btn" onClick={go}>{w.act}</button>{t.state === 'REVIEW' && <button type="button" className="v8-btn is-ghost" onClick={go}>{tr('打回重做')}</button>}</div>
   </article>;
 }
 
@@ -290,15 +302,16 @@ function WaitingCard({ waiting, open, heroKey }: { waiting: TicketView[] } & Doo
 function Feed({ data, open }: { data: BoardData; open?: Door }) {
   const hhmm = (at: number) => new Date(at).toTimeString().slice(0, 5);
   return <div className="v8-feed v8-sticker">
-    <div className="v8-head"><span className="v8-cap">动态 · 只记要紧的</span>{open && <button type="button" className="v8-feedlink" onClick={() => open({ kind: 'archive' }, null)}>档案 →</button>}</div>
+    <div className="v8-head"><span className="v8-cap">{tr('动态 · 只记要紧的')}</span>{open && <button type="button" className="v8-feedlink" onClick={() => open({ kind: 'archive' }, null)}>{tr('档案 →')}</button>}</div>
     <div className="v8-lines">
       {data.feed.slice(0, 8).map(f => <div key={f.id} className="v8-ln"><time>{hhmm(f.at)}</time><b className={'is-' + f.tone}>{f.who}</b><span>{f.text}</span></div>)}
     </div>
   </div>;
 }
 
-function TalkBar({ data, onSay, onAnswer }: Omit<BoardProps, 'data'> & { data: BoardData }) {
+function TalkBar({ data, onSay, onAnswer, onPick, onNextStage, onSplit }: Omit<BoardProps, 'data'> & { data: BoardData }) {
   const [text, setText] = useState('');
+  const field = useRef<HTMLInputElement>(null);
   const send = () => { const v = text.trim(); if (!v) return; onSay(v); setText(''); };
   const key = (e: KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } };
   // Scrolls back through history; stays pinned to the newest line unless the boss has scrolled up to read.
@@ -307,8 +320,8 @@ function TalkBar({ data, onSay, onAnswer }: Omit<BoardProps, 'data'> & { data: B
   const last = data.talk[data.talk.length - 1]?.id;
   useEffect(() => { const el = box.current; if (el && pinned.current) el.scrollTop = el.scrollHeight; }, [last, data.talk.length]);
   return <div className="v8-talk v8-sticker">
-    <div className="v8-head"><span className="v8-cap">对讲栏 · 你只用跟{leadName()}说话</span><span className="v8-cap">Enter 发话</span></div>
-    <div className="v8-chat" ref={box} aria-live="polite" tabIndex={0} aria-label="对话记录，可以往上翻"
+    <div className="v8-head"><span className="v8-cap">{tr('对讲栏 · 你只用跟')}{leadName()}{tr('说话')}</span><span className="v8-cap">{tr('Enter 发话')}</span></div>
+    <div className="v8-chat" ref={box} aria-live="polite" tabIndex={0} aria-label={tr('对话记录，可以往上翻')}
       onScroll={e => { const el = e.currentTarget; pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; }}>
       <div className="v8-chat-in">
       {data.talk.map(t => t.author === 'boss'
@@ -317,17 +330,85 @@ function TalkBar({ data, onSay, onAnswer }: Omit<BoardProps, 'data'> & { data: B
           <div className="v8-bubble">{t.text}
             {t.question && <div className="v8-opts">{t.question.options.map(o =>
               <button key={o.id} type="button" className={'v8-opt' + (o.id === t.question!.recommended ? ' is-rec' : '')} onClick={() => onAnswer(t.question!.ticketId, o.id)}>
-                {o.label}{o.id === t.question!.recommended ? '（它推荐）' : ''}</button>)}</div>}
+                {o.label}{o.id === t.question!.recommended ? tr('（它推荐）') : ''}</button>)}</div>}
           </div>
         </div>)}
+      {data.roundtables.map(r => <Roundtable key={'rt' + r.id} r={r} {...(onPick ? { onPick } : {})} />)}
+      {data.chains.map(c => <ChainCard key={'ch' + c.id} c={c} {...(onNextStage ? { onNext: onNextStage } : {})} />)}
+      {data.splits.map(s => <SplitCard key={'sp' + s.id} s={s} {...(onSplit ? { onDecide: onSplit } : {})} />)}
       </div>
     </div>
     <div className="v8-say">
-      <input value={text} onChange={e => setText(e.target.value)} onKeyDown={key} aria-label={'跟' + leadName() + '说话'} placeholder={'跟' + leadName() + '说一句，比如：登录页的验证码收不到，查一下'} />
-      <button type="button" className="v8-send" onClick={send}>发话</button>
+      <input ref={field} value={text} onChange={e => setText(e.target.value)} onKeyDown={key} aria-label={tr('跟') + leadName() + tr('说话')} placeholder={tr('跟') + leadName() + tr('说一句，比如：登录页的验证码收不到，查一下')} />
+      <MicButton input={field} />
+      <button type="button" className="v8-send" onClick={send}>{tr('发话')}</button>
     </div>
     <div className="v8-chips">
-      {['现在都在干嘛？', '停掉工位 02', '把排队 03 提到最前'].map(c => <button key={c} type="button" className="v8-chip" onClick={() => setText(c)}>{c}</button>)}
+      {[tr('现在都在干嘛？'), tr('停掉工位 02'), tr('把排队 03 提到最前')].map(c => <button key={c} type="button" className="v8-chip" onClick={() => setText(c)}>{c}</button>)}
+    </div>
+  </div>;
+}
+
+/**
+ * 圆桌会议 in the talk bar (A6): who has handed in a proposal, then the lead sorting them, then Plan A and Plan B
+ * with one button each. Picking one opens a ticket that does it.
+ */
+function Roundtable({ r, onPick }: { r: BoardData['roundtables'][number]; onPick?: (id: number, which: 'A' | 'B') => void }) {
+  const lead = leadName();
+  const handed = r.proposals.filter(p => p.ok).map(p => p.agent), missed = r.proposals.filter(p => !p.ok).map(p => p.agent);
+  return <div className="v8-lead v8-rt"><img className="v8-g" src={art('boss', r.state === 'choosing' ? 'pointing' : 'listening')} alt={lead} />
+    <div className="v8-bubble">
+      <span className="v8-cap">{tr('圆桌 · ')}{r.title}</span>
+      {r.state === 'proposing' && <p>{tr('几只小怪在各自出方案，互相看不到。')}{handed.length ? tr('已交：') + handed.join(tr('、')) + tr('。') : tr('还没有人交。')}{missed.length ? missed.join(tr('、')) + tr(' 没交上来。') : ''}</p>}
+      {r.state === 'merging' && <p>{tr('方案到齐了（')}{handed.join(tr('、'))}{tr('），')}{lead}{tr('在整理成 Plan A / Plan B。')}</p>}
+      {r.state === 'choosing' && r.plans && <>
+        <p>{r.plans.note || tr('两个方案整理好了。')}{tr('每个方案的说明在')}{lead}{tr('那页（点中间的')}{lead}{tr('）。')}</p>
+        {onPick && <div className="v8-opts">{(['A', 'B'] as const).map(k => { const p = k === 'A' ? r.plans!.a : r.plans!.b; const rec = r.plans!.recommended === k;
+          return <button key={k} type="button" className={'v8-opt' + (rec ? ' is-rec' : '')} title={p.summary} onClick={() => onPick(r.id, k)}>{tr('选 Plan ')}{k}{tr('：')}{p.title}{rec ? tr('（推荐）') : ''}</button>; })}</div>}
+      </>}
+    </div>
+  </div>;
+}
+
+/**
+ * 工序链 in the talk bar (A15): the stages in order, which are done, and once a stage was accepted a button to start
+ * the next one (by hand first, requirement 47).
+ */
+export function ChainCard({ c, onNext }: { c: BoardData['chains'][number]; onNext?: (id: number) => void }) {
+  const mark = (s: BoardData['chains'][number]['stages'][number]) => s.state === 'DONE' ? ' ✓' : s.state ? ' · ' + TICKET_STATE_LABEL[s.state] : '';
+  const next = c.next !== null ? c.stages[c.next] : null;
+  return <div className="v8-lead v8-rt v8-chain"><img className="v8-g" src={art('boss', next ? 'pointing' : 'listening')} alt={leadName()} />
+    <div className="v8-bubble">
+      <span className="v8-cap">{tr('工序链 · ')}{c.title}</span>
+      <p>{c.stages.map((s, i) => (i + 1) + ' ' + s.title + mark(s)).join(' → ')}</p>
+      {next && <>
+        <p>{tr('上一道收下了。下一道：{0}——{1}', [next.title, next.what])}</p>
+        {onNext && <div className="v8-opts"><button type="button" className="v8-opt is-rec" onClick={() => onNext(c.id)}>{tr('开下一道：{0}', [next.title])}</button></div>}
+      </>}
+    </div>
+  </div>;
+}
+
+/**
+ * 拆解 in the talk bar (A12): a gremlin working out how a big job comes apart, then its pieces for the boss to approve,
+ * or why it can't be split. Nothing starts until the boss decides (requirement 34).
+ */
+export function SplitCard({ s, onDecide }: { s: BoardData['splits'][number]; onDecide?: (id: number, how: 'split' | 'whole') => void }) {
+  return <div className="v8-lead v8-rt v8-chain"><img className="v8-g" src={art('boss', s.state === 'choosing' ? 'pointing' : 'listening')} alt={leadName()} />
+    <div className="v8-bubble">
+      <span className="v8-cap">{tr('拆解 · ')}{s.title}</span>
+      {s.state === 'splitting' && <p>{tr('{0} 在读项目，看这件活能不能拆开同时做。', [s.by])}</p>}
+      {s.state === 'choosing' && <>
+        {s.canSplit
+          ? <><p>{tr('{0} 建议拆成 {1} 件，同时做：', [s.by, s.pieces.length])}</p>
+            {s.pieces.map((p, i) => <p key={i}><b>{(i + 1) + '. ' + p.title}</b>{tr('：') + p.what}</p>)}
+            <p>{s.why}</p></>
+          : <p>{tr('{0} 觉得拆不开：{1}', [s.by, s.why])}</p>}
+        {onDecide && <div className="v8-opts">
+          {s.canSplit && <button type="button" className="v8-opt is-rec" onClick={() => onDecide(s.id, 'split')}>{tr('照这样拆，一起做')}</button>}
+          <button type="button" className={'v8-opt' + (s.canSplit ? '' : ' is-rec')} onClick={() => onDecide(s.id, 'whole')}>{tr('不拆，整件做')}</button>
+        </div>}
+      </>}
     </div>
   </div>;
 }

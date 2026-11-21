@@ -1,5 +1,7 @@
+import { tr } from '../../shared/i18n';
 import { MAGPIE_KEY } from './magpieService';
 import { antigravityAcpDir, antigravitySignedIn } from './antigravityLogin';
+import { hostAgy } from './antigravityHost';
 import { createRequire } from 'node:module';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -39,6 +41,11 @@ export interface AgentQuirk {
   magpie?(origin: string, model: string, env: Record<string, string>, person: NodeJS.ProcessEnv, effort?: string): Promise<Record<string, string>> | Record<string, string>;
   /** The light start for the lead and the reviewer (AcpShellOptions.light). */
   light?(env: NodeJS.ProcessEnv): AcpShellOptions['light'];
+  /**
+   * The computer's own program to use instead of the one from the official list, even when that one is not installed
+   * (A14: Antigravity's `agy acp` with the editor's sign-in). Null: use the official one.
+   */
+  adopt?(env: NodeJS.ProcessEnv): Promise<{ launch: AcpShellOptions; note: string } | null>;
   /** The roster can start this agent's own sign-in (see claudeLogin.ts). */
   signInFlow?: boolean;
   /** One plain sentence for "not signed in": where the person signs in. */
@@ -171,7 +178,7 @@ export const QUIRKS: Record<string, AgentQuirk> = {
       : { launch },
     signIn: (launch, env) => { const cli = findClaude(launch.args[0] ?? '', env); return cli ? claudeSignIn(cli, env) : 'unknown'; },
     signInFlow: true,
-    signInHelp: '要登录一次 Claude（桌面版的登录不通用）。点右边的"去登录"。',
+    signInHelp: tr('要登录一次 Claude（桌面版的登录不通用）。点右边的"去登录"。'),
     // Magpie's own way to put Claude Code on its gateway (magpie internal/agent/claude.go): the base URL, the key
     // naming the app, and the model for every tier, so nothing goes to another model behind the person's back.
     magpie: (origin, model) => ({
@@ -186,7 +193,7 @@ export const QUIRKS: Record<string, AgentQuirk> = {
   // 500 MB unpacked for Windows x64 in 0.166.0), so it works without installing Codex first.
   'codex-acp': {
     installArgs: env => findCodex(env) ? ['--omit=optional'] : [],
-    installNote: env => findCodex(env) ? null : '这台电脑上没有 Codex，会连 Codex 程序一起装，另外约 500 MB',
+    installNote: env => findCodex(env) ? null : tr('这台电脑上没有 Codex，会连 Codex 程序一起装，另外约 500 MB'),
     // Adapter 2.6.0 offers read-only | workspace-write | agent | agent-full-access.
     modes: { lead: 'read-only', reviewer: 'read-only', worker: 'agent' },
     light: env => codexLight(env),
@@ -194,11 +201,11 @@ export const QUIRKS: Record<string, AgentQuirk> = {
       const codex = findCodex(env);
       if (codex) return { launch: { ...launch, env: { ...codexSurface(launch.env), CODEX_PATH: codex } } };
       // No Codex of the person's: the adapter runs the Codex that came with it (it does so when CODEX_PATH is unset).
-      return bundledCodex(launch.args[0] ?? '') ? { launch: { ...launch, env: codexSurface(launch.env) } } : { missing: '这台电脑上没有 Codex 程序。在下面点"重新装"，会连 Codex 程序一起装上（约 500 MB）。' };
+      return bundledCodex(launch.args[0] ?? '') ? { launch: { ...launch, env: codexSurface(launch.env) } } : { missing: tr('这台电脑上没有 Codex 程序。在下面点"重新装"，会连 Codex 程序一起装上（约 500 MB）。') };
     },
     signIn: async (launch, env) => { const cli = codexCli(launch, env); return cli ? codexSignIn(cli, { ...env, ...(cli.env ?? {}) }) : 'unknown'; },
     signInFlow: true,
-    signInHelp: '要登录一次 Codex（用你自己的 ChatGPT 账号）。点右边的"去登录"。',
+    signInHelp: tr('要登录一次 Codex（用你自己的 ChatGPT 账号）。点右边的"去登录"。'),
     // Magpie's own way (magpie internal/agent/codex.go): signed in to ChatGPT, Codex keeps its built-in provider and only
     // its OpenAI address moves to Magpie, which passes OpenAI's models through and answers the rest, so a conversation
     // started before the switch goes on. Not signed in, Magpie is a provider of its own.
@@ -219,9 +226,14 @@ export const QUIRKS: Record<string, AgentQuirk> = {
   // its own under ~/.gemini/antigravity-acp. Checked 2026-11-17: with no settings file, session/new answers
   // "Authentication required".
   'antigravity-acp': {
+    // A14 (Orca's way): the computer's own `agy acp`, signed in with the same sign-in as the Antigravity editor.
+    adopt: env => hostAgy(env),
     // Its sign-in is kept as a file in its own folder (T3 Code forces this too), so the roster can see it and every
     // session finds the same one (antigravityLogin.ts).
-    prepare: launch => ({ launch: { ...launch, env: { ...(launch.env ?? {}), AGY_ACP_FORCE_FILE_STORAGE: '1' } } }),
+    // Orca (antigravity-acp-environment.ts, antigravity-acp-runtime-probe.ts) also turns off the server's output
+    // buffering and gives it 90 s to answer the handshake; at our 30 s its first session in a real project folder
+    // timed out (2026-11-21, first real ticket).
+    prepare: launch => ({ launch: { ...launch, readyTimeoutMs: Math.max(launch.readyTimeoutMs ?? 0, 90_000), env: { ...(launch.env ?? {}), AGY_ACP_FORCE_FILE_STORAGE: '1', PYTHONUNBUFFERED: '1' } } }),
     signIn: (_launch, env) => {
       if (antigravitySignedIn(env)) return 'yes';
       try {
@@ -230,12 +242,12 @@ export const QUIRKS: Record<string, AgentQuirk> = {
       } catch { return 'no'; }
     },
     signInFlow: true,
-    signInHelp: '这个接入程序有自己单独的登录，和 Antigravity 编辑器不通用，要用你的 Google 账号另登一次。点右边的"去登录"。',
+    signInHelp: tr('这个接入程序有自己单独的登录，要用你的 Google 账号另登一次，点右边的"去登录"。（电脑上装了 Antigravity 命令行 agy 的话，会直接用编辑器的登录，不用另登。）'),
   },
   // OpenMausBot acp/deepseek.ts: no sign-in step; the key comes from the environment or dsh's own files.
   dsh: {
     signIn: (_launch, env) => dshSignIn(env),
-    signInHelp: '在 DSH 里登录账号或填好密钥。',
+    signInHelp: tr('在 DSH 里登录账号或填好密钥。'),
   },
   // Gemini, Copilot, Cursor, Kimi, Kiro, Cline, Droid, Devin, Qwen, Grok, OpenCode (moreAgents.ts, from OpenMausBot).
   ...MORE_QUIRKS,

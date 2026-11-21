@@ -9,6 +9,8 @@ import type { V8Settings } from '../shared/v8/settings';
  */
 export interface AppConfig {
   v8?: V8Settings;
+  /** A8: the interface language: Chinese, English, or the computer's own. */
+  uiLanguage?: 'zh' | 'en' | 'system';
   [older: string]: unknown;
 }
 

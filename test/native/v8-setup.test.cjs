@@ -1,5 +1,5 @@
 'use strict';
-// Requirement 26: the lead's name is the boss's to set (小怪A until then), and the board says which agents play the roles,
+// Requirement 26: the lead's name is the boss's to set (主理小怪 until then), and the board says which agents play the roles,
 // so the window knows when nothing is set up yet (first run). Runs under the pinned Electron with ELECTRON_RUN_AS_NODE=1.
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
@@ -14,10 +14,10 @@ async function bench(t, settings) {
   return b;
 }
 
-test('the lead is called 小怪A until the boss names it; the name reaches the board', async t => {
-  assert.equal((await bench(t, { slots: 1 })).board().leadName, '小怪A');
+test('the lead is called 主理小怪 until the boss names it; the name reaches the board', async t => {
+  assert.equal((await bench(t, { slots: 1 })).board().leadName, '主理小怪');
   assert.equal((await bench(t, { slots: 1, leadName: '  阿福 ' })).board().leadName, '阿福');
-  assert.equal((await bench(t, { slots: 1, leadName: '   ' })).board().leadName, '小怪A');
+  assert.equal((await bench(t, { slots: 1, leadName: '   ' })).board().leadName, '主理小怪');
 });
 
 test('nothing set up yet: the board says it is not on local agents, so the window opens the first-run page', async t => {

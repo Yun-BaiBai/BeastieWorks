@@ -97,6 +97,8 @@ test('calls during a switch all get the new workbench; a settings change also re
   const [x, y, z] = await Promise.all([host.get(), host.get(), host.get()]);
   assert.ok(x === y && y === z && x !== a, 'one new workbench for all callers');
   settings = { projectRoot: B, slots: 3 };
+  assert.equal(await host.get(), x, 'more slots apply to the same workbench (A1)');
+  settings = { projectRoot: B, slots: 3, review: false };
   const w = await host.get();
   assert.notEqual(w, x, 'a settings change reopens');
   assert.equal(w.scheduler.slots().filter(s => !s.emergency).length, 3);

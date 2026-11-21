@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { AcpShellOptions } from './acpShell';
@@ -34,7 +35,7 @@ function resolveLaunch(deps: RosterDeps, agent: RegistryAgent): Resolved {
   if (script && existsSync(script)) {
     return { launch: { label: agent.name, command: deps.registry.node.command, args: [script, ...(agent.distribution.npx?.args ?? [])], env: { ...(deps.registry.node.env ?? {}), ...(agent.distribution.npx?.env ?? {}) } } };
   }
-  return a.state === 'unsupported' ? { state: 'unsupported', note: '这台电脑装不了：' + (a.reason.startsWith('needs Python') ? '要先装 Python（uv），小怪工坊不替你装' : '官方没给这台电脑能用的版本') } : { state: 'not_installed', note: '还没装，点开可以一键装上。', canInstall: true };
+  return a.state === 'unsupported' ? { state: 'unsupported', note: tr('这台电脑装不了：') + (a.reason.startsWith('needs Python') ? tr('要先装 Python（uv），小怪工坊不替你装') : tr('官方没给这台电脑能用的版本')) } : { state: 'not_installed', note: tr('还没装，点开可以一键装上。'), canInstall: true };
 }
 
 export async function readRoster(deps: RosterDeps): Promise<Roster> {
@@ -46,22 +47,25 @@ export async function readRoster(deps: RosterDeps): Promise<Roster> {
   const add = async (id: string, listedName: string, website: string | null, found: Resolved) => {
     const name = QUIRKS[id]?.displayName ?? listedName;
     const installed = 'launch' in found ? found.installed ?? null : null;
+    // A14: the computer's own program, when the agent says it has one that is ready (Antigravity's agy).
+    const adopted = QUIRKS[id]?.adopt ? await QUIRKS[id]!.adopt!(env).catch(() => null) : null;
+    if (adopted) found = { launch: adopted.launch };
     if ('launch' in found) found = { launch: { ...found.launch, label: name } };
     if (!('launch' in found)) { rows.push({ id, name, website, state: found.state, signIn: 'unknown', canSignIn: false, note: found.note, canInstall: found.canInstall === true, installed: null }); return; }
     const quirk = QUIRKS[id];
-    const ready = quirk?.prepare ? quirk.prepare(found.launch, env, { dataDir: deps.dataDir ?? null }) : { launch: found.launch };
+    const ready = quirk?.prepare && !adopted ? quirk.prepare(found.launch, env, { dataDir: deps.dataDir ?? null }) : { launch: found.launch };
     if ('missing' in ready) { rows.push({ id, name, website, state: 'missing_program', signIn: 'unknown', canSignIn: false, note: ready.missing, installed }); return; }
     let signIn: RosterRow['signIn'] = 'unknown';
-    try { if (quirk?.signIn) signIn = await quirk.signIn(ready.launch, { ...env, ...(ready.launch.env ?? {}) }); } catch { /* stays unknown */ }
+    try { if (adopted) signIn = 'yes'; else if (quirk?.signIn) signIn = await quirk.signIn(ready.launch, { ...env, ...(ready.launch.env ?? {}) }); } catch { /* stays unknown */ }
     launches.set(id, { ...ready.launch, node: deps.registry.node, ...(quirk?.modes ? { modes: quirk.modes } : {}), ...(quirk?.light ? { light: quirk.light(env) } : {}),
       ...(quirk?.magpie && deps.magpieOrigin ? { magpie: { origin: deps.magpieOrigin, wire: (origin: string, model: string, e: Record<string, string>, effort?: string) => quirk.magpie!(origin, model, e, env, effort) } } : {}) });
-    rows.push({ id, name, website, state: 'ready', signIn, canSignIn: quirk?.signInFlow === true, installed, note: signIn === 'no' ? (quirk?.signInHelp ?? '还没登录，要在这个 agent 里登录。') : signIn === 'unknown' ? '装好了；登录没登录要说一句话才知道。' : '装好了，已登录。' });
+    rows.push({ id, name, website, state: 'ready', signIn, canSignIn: quirk?.signInFlow === true && !adopted, installed, note: adopted ? adopted.note : signIn === 'no' ? (quirk?.signInHelp ?? tr('还没登录，要在这个 agent 里登录。')) : signIn === 'unknown' ? tr('装好了；登录没登录要说一句话才知道。') : tr('装好了，已登录。') });
   };
 
   // Sign-in checks start a small program each; run them side by side so the page does not wait on the slowest.
   await Promise.all([
     ...registry.agents.map(agent => add(agent.id, agent.name, agent.website ?? null, resolveLaunch(deps, agent))),
-    ...extraAgents({}, env).map(extra => add(extra.id, extra.name, extra.website, extra.launch ? { launch: extra.launch } : { state: 'not_installed', note: '这台电脑上没找到' })),
+    ...extraAgents({}, env).map(extra => add(extra.id, extra.name, extra.website, extra.launch ? { launch: extra.launch } : { state: 'not_installed', note: tr('这台电脑上没找到') })),
   ]);
   const rank = (r: RosterRow) => r.state === 'ready' ? (r.signIn === 'yes' ? 0 : r.signIn === 'unknown' ? 1 : 2) : r.state === 'missing_program' ? 3 : r.state === 'not_installed' ? 4 : 5;
   rows.sort((x, y) => rank(x) - rank(y) || x.name.localeCompare(y.name));

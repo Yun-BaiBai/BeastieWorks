@@ -1,9 +1,11 @@
 appId: works.beastie.app
 productName: Beastie Works
 copyright: Copyright © 2026 Beastie Works
+publish: null
 
 # 小怪工坊 is our own app (老板 2026-11-20). Nothing here points at Munder Difflin, the MIT-licensed project it
-# started from: no update feed (no `publish`, so no app-update.yml and no updater), no URL scheme, no release notes
+# started from: no update feed (`publish: null`: without it the builder guesses our GitHub repository from package.json
+# and writes an app-update.yml, found in C2; nothing reads it, there is no updater), no URL scheme, no release notes
 # from its repository. Its copyright notice ships in THIRD_PARTY_NOTICES.txt, as its license requires.
 #
 # Claude Code is not shipped (老板 2026-11-20): Anthropic asks products that preinstall it to agree to its Commercial
@@ -35,6 +37,9 @@ extraResources:
   # Git (MinGit, put in build/git by tools/prepare-git.cjs), used when the computer has none (src/main/index.ts).
   - from: build/git
     to: git
+  # The skills that ship with the app (A5), each with its license (src/main/v8/ipc.ts reads them from here).
+  - from: resources/skills
+    to: skills
 
 # Files other programs run must be real files on disk (src/main/v8/hostToolBridge.ts outsideAsar): the relay an agent
 # starts, the npm that installs agents, and better-sqlite3's native module.

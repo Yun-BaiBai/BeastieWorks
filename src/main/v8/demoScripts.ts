@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n';
 import type { FakeControl, FakeScript, FakeScripts } from './fakeShell';
 import { REPORT_NUDGE } from './prompts';
 
@@ -32,7 +33,7 @@ function lead(pace: number): FakeScript {
         else if (/停/.test(words) && ticket) { await c.hostTool('stop_ticket', { ticket_id: Number(ticket[1]), message_id: Number(id) }); await c.hostTool('reply_to_boss', { text: `#${ticket[1]} 停了。` }); }
         else if (ticket) { await c.hostTool('forward_to_ticket', { message_id: Number(id), ticket_id: Number(ticket[1]) }); await c.hostTool('reply_to_boss', { text: `转给 #${ticket[1]} 了。` }); }
         else if (/在干嘛|进度/.test(words)) { const r = await c.hostTool('list_tickets', {}); await c.hostTool('reply_to_boss', { text: r.ok ? r.text : '看不到工单。' }); }
-        else { const r = await c.hostTool('open_ticket', { message_id: Number(id), routing_note: '' }); await c.hostTool('reply_to_boss', { text: r.ok ? r.text.replace('已开', '派出去了：') : '没开成：' + r.error }); }
+        else { const r = await c.hostTool('open_ticket', { message_id: Number(id), routing_note: '' }); await c.hostTool('reply_to_boss', { text: r.ok ? r.text.replace(tr('已开'), tr('派出去了：')) : '没开成：' + r.error }); }
       }
       // Reports ("交了报告：…") and review outcomes ("做完了，审查通过。…") about one ticket.
       const report = /工单 #(\d+)「(.*?)」(?:交了报告：)?(.*)/.exec(text);
@@ -96,7 +97,7 @@ function reviewer(pace: number): FakeScript {
         reason: fail ? '演示：没有对上原话，要先改标题再交' : '演示：三条都对',
         checks: [
           { label: '对上原话了吗', ok: !fail, detail: fail ? '演示：漏了老板说的标题' : '演示：做的就是老板要的事' },
-          { label: '有验证输出吗', ok: true, detail: '演示：附了 npm test 的输出' },
+          { label: '有验证结果吗', ok: true, detail: '演示：附了 npm test 的输出' },
           { label: '有没有多改', ok: true, detail: '演示：只动了 src/demo.ts' },
         ],
       });

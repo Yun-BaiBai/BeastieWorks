@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
@@ -41,7 +42,7 @@ interface FolderEntry { path: string; kind: 'file' | 'folder' | 'link' | 'submod
 interface ContentEntry { type: string; name: string; path: string; sha?: string; download_url?: string | null }
 interface Target { owner: string; repo: string; ref?: string; path: string; skill?: string; rawUrl?: string }
 
-const NOT_A_SOURCE = '这不像 GitHub 仓库、文件夹或 SKILL.md 的链接，也不像 skills.sh 的技能页';
+const NOT_A_SOURCE = tr('这不像 GitHub 仓库、文件夹或 SKILL.md 的链接，也不像 skills.sh 的技能页');
 
 // One budget for the whole import, enforced while reading the stream.
 function boundedImportFetch(fetcher: typeof fetch): typeof fetch {
@@ -50,7 +51,7 @@ function boundedImportFetch(fetcher: typeof fetch): typeof fetch {
   return (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const listing = String(input).startsWith(`${API}/`);
     if (listing ? ++apiRequests > IMPORT_LIMITS.apiRequests : ++downloads > IMPORT_LIMITS.downloads) {
-      throw new ImportLimitError('请求次数到上限了，换一个具体的技能文件夹链接再试。');
+      throw new ImportLimitError(tr('请求次数到上限了，换一个具体的技能文件夹链接再试。'));
     }
     signal.throwIfAborted();
     const response = await fetcher(input, { ...init, signal });
@@ -66,7 +67,7 @@ function boundedImportFetch(fetcher: typeof fetch): typeof fetch {
         size += chunk.value.byteLength;
         bytes += chunk.value.byteLength;
         if (size > (listing ? LISTING_MAX_BYTES : SKILL_FOLDER_LIMITS.fileBytes) || bytes > IMPORT_LIMITS.bytes) {
-          throw new ImportLimitError('文件太大了，换一个小一点的技能文件夹再试。');
+          throw new ImportLimitError(tr('文件太大了，换一个小一点的技能文件夹再试。'));
         }
         chunks.push(chunk.value);
       }
@@ -96,11 +97,11 @@ function target(owner: string, repo: string, ref: string | undefined, p: string,
 /** A GitHub repository, folder or SKILL.md link, a raw SKILL.md link, a skills.sh page, or owner/repo. */
 export function parseSkillSource(input: string): Target | { error: string } {
   const text = input.trim();
-  if (!text) return { error: '先贴一个 GitHub 仓库、文件夹或 SKILL.md 的链接' };
+  if (!text) return { error: tr('先贴一个 GitHub 仓库、文件夹或 SKILL.md 的链接') };
   const raw = text.match(/^(https?):\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/(.+\/)?SKILL\.md$/i);
   if (raw) {
     // Plain http sends the skill URL in the clear; refuse it rather than upgrade it.
-    if (raw[1]!.toLowerCase() !== 'https') return { error: '请用 https:// 开头的链接' };
+    if (raw[1]!.toLowerCase() !== 'https') return { error: tr('请用 https:// 开头的链接') };
     const parts = (raw[4] ?? '').split('/').filter(Boolean);
     const named = parts[0] === 'refs' && (parts[1] === 'heads' || parts[1] === 'tags') ? 3 : 1;
     if (parts.length < named) return { error: NOT_A_SOURCE };
@@ -143,7 +144,7 @@ function encodePath(p: string): string {
 
 function apiError(response: Response, url: string): GitHubApiError {
   const limited = response.status === 429 || (response.status === 403 && response.headers.get('x-ratelimit-remaining') === '0');
-  return new GitHubApiError(limited ? 'GitHub 对不登录的请求有每小时上限，已经用完了，过一会儿再试。' : `GitHub 回了 ${response.status}（${url}）`);
+  return new GitHubApiError(limited ? tr('GitHub 对不登录的请求有每小时上限，已经用完了，过一会儿再试。') : tr('GitHub 回了 {0}（{1}）', [response.status, url]));
 }
 
 async function apiGet(url: string, fetcher: typeof fetch, accept = 'application/vnd.github+json'): Promise<Response> {
@@ -156,7 +157,7 @@ async function apiGet(url: string, fetcher: typeof fetch, accept = 'application/
 async function resolveCommit(owner: string, repo: string, ref: string, fetcher: typeof fetch): Promise<string> {
   const url = `${API}/repos/${owner}/${repo}/commits/${encodeURIComponent(ref)}`;
   const sha = (await (await apiGet(url, fetcher, 'application/vnd.github.sha')).text()).trim();
-  if (!/^[0-9a-f]{40}$/.test(sha)) throw new GitHubApiError(`GitHub 没给出这个链接对应的提交（${url}）`);
+  if (!/^[0-9a-f]{40}$/.test(sha)) throw new GitHubApiError(tr('GitHub 没给出这个链接对应的提交（{0}）', [url]));
   return sha;
 }
 
@@ -183,7 +184,7 @@ async function fetchBytes(url: string, fetcher: typeof fetch): Promise<Buffer> {
   assertPinnedRawUrl(url);
   // The raw host never redirects: error rather than follow one to an arbitrary host.
   const response = await fetcher(url, { headers: { 'user-agent': USER_AGENT }, redirect: 'error' });
-  if (!response.ok) throw new Error(`下载失败（${response.status}）`);
+  if (!response.ok) throw new Error(tr('下载失败（{0}）', [response.status]));
   return Buffer.from(await response.arrayBuffer());
 }
 
@@ -313,11 +314,11 @@ export function planSkillFolder<T extends FolderEntry>(entries: readonly T[]): {
 async function folderTree(snapshot: Snapshot, dir: string, fetcher: typeof fetch): Promise<Array<FolderEntry & { sha: string }>> {
   if (dir && !snapshot.trees.has(dir)) await listDir(snapshot, dir.includes('/') ? dir.slice(0, dir.lastIndexOf('/')) : '', fetcher);
   const sha = dir ? snapshot.trees.get(dir) : snapshot.commit;
-  if (!sha) throw new GitHubApiError(`GitHub 没列出文件夹 ${dir}`);
+  if (!sha) throw new GitHubApiError(tr('GitHub 没列出文件夹 {0}', [dir]));
   const url = `${API}/repos/${snapshot.owner}/${snapshot.repo}/git/trees/${sha}?recursive=1`;
   const j = await (await apiGet(url, fetcher)).json() as { truncated?: unknown; tree?: unknown };
-  if (!Array.isArray(j.tree)) throw new GitHubApiError(`GitHub 的文件夹清单读不懂（${url}）`);
-  if (j.truncated === true) throw new ImportLimitError('这个技能文件夹里的文件太多了，换一个小一点的文件夹再试。');
+  if (!Array.isArray(j.tree)) throw new GitHubApiError(tr('GitHub 的文件夹清单读不懂（{0}）', [url]));
+  if (j.truncated === true) throw new ImportLimitError(tr('这个技能文件夹里的文件太多了，换一个小一点的文件夹再试。'));
   return j.tree.flatMap((e): Array<FolderEntry & { sha: string }> => {
     if (!e || typeof e !== 'object') return [];
     const x = e as Record<string, unknown>;
@@ -334,15 +335,15 @@ const isLfsPointer = (bytes: Buffer) => bytes.length < 1024 && bytes.toString('u
 async function fetchSkillFolder(t: Target, snapshot: Snapshot, dir: string, fetcher: typeof fetch): Promise<FetchedSkill> {
   const entries = await folderTree(snapshot, dir, fetcher);
   const { take, skipped } = planSkillFolder(entries);
-  if (take[0]?.path !== 'SKILL.md') throw new Error(`${dir || '仓库根目录'} 里没有 SKILL.md`);
-  if (take[0].size > SKILL_FILE_MAX_BYTES) throw new Error(`SKILL.md 超过 ${SKILL_FILE_MAX_BYTES / 1024}KB`);
+  if (take[0]?.path !== 'SKILL.md') throw new Error(tr('{0} 里没有 SKILL.md', [dir || tr('仓库根目录')]));
+  if (take[0].size > SKILL_FILE_MAX_BYTES) throw new Error(tr('SKILL.md 超过 {0}KB', [SKILL_FILE_MAX_BYTES / 1024]));
   const files: FetchedSkill['files'] = [];
   for (let i = 0; i < take.length; i += PARALLEL_DOWNLOADS) {
     const batch = await Promise.all(take.slice(i, i + PARALLEL_DOWNLOADS).map(async entry => {
       const location = encodePath(dir ? `${dir}/${entry.path}` : entry.path);
       const content = await fetchBytes(`https://${RAW_HOST}/${snapshot.owner}/${snapshot.repo}/${snapshot.commit}/${location}`, fetcher);
       // Every file is the one the commit's tree names, so the recorded commit is what came in.
-      if (gitBlobSha(content) !== entry.sha) throw new Error(`${entry.path} 和提交 ${snapshot.commit.slice(0, 7)} 对不上，再导入一次试试`);
+      if (gitBlobSha(content) !== entry.sha) throw new Error(tr('{0} 和提交 {1} 对不上，再导入一次试试', [entry.path, snapshot.commit.slice(0, 7)]));
       return { path: entry.path, content, executable: Boolean(entry.executable) };
     }));
     for (const file of batch) {
@@ -363,8 +364,8 @@ async function fetchSkills(t: Target, fetcher: typeof fetch): Promise<FetchedSki
   const snapshot: Snapshot = { owner: t.owner, repo: t.repo, commit, trees: new Map() };
   const dirs = await discoverSkillDirs(t, snapshot, fetcher);
   if (!dirs.length) {
-    throw new Error(t.skill ? `那里找不到叫 "${t.skill}" 的技能，核对一下 skills.sh 页面上的名字`
-      : '那里找不到 SKILL.md，贴一个技能文件夹，或者带 skills 文件夹的仓库');
+    throw new Error(t.skill ? tr('那里找不到叫 "{0}" 的技能，核对一下 skills.sh 页面上的名字', [t.skill])
+      : tr('那里找不到 SKILL.md，贴一个技能文件夹，或者带 skills 文件夹的仓库'));
   }
   const skills: FetchedSkill[] = [];
   for (const dir of dirs) skills.push(await fetchSkillFolder(t, snapshot, dir, fetcher));

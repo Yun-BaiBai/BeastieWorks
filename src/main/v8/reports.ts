@@ -4,7 +4,7 @@ import type { Report, ReviewInput } from '../../shared/v8/tickets';
 export function validateReview(input: unknown): ReviewInput {
   const r = (input && typeof input === 'object' && !Array.isArray(input) ? input : {}) as Record<string, unknown>;
   if ((r.verdict !== 'pass' && r.verdict !== 'fail') || typeof r.reason !== 'string' || !r.reason.trim() || r.reason.length > 2000) throw new Error('V8_REVIEW_INVALID');
-  if (!Array.isArray(r.checks) || r.checks.length < 1 || r.checks.length > 6) throw new Error('V8_REVIEW_INVALID');
+  if (!Array.isArray(r.checks) || r.checks.length !== 3) throw new Error('V8_REVIEW_INVALID');
   const checks = r.checks.map(c => {
     const x = (c ?? {}) as Record<string, unknown>;
     if (typeof x.label !== 'string' || !x.label.trim() || x.label.length > 100 || typeof x.ok !== 'boolean' || typeof x.detail !== 'string' || x.detail.length > 1000) throw new Error('V8_REVIEW_INVALID');

@@ -1,3 +1,4 @@
+import { tr, withLanguageRule } from '../../shared/i18n';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
@@ -93,11 +94,15 @@ export interface AcpHandshake {
   agentVersion: string | null;
   canLoadSession: boolean;
   authMethods: string[];
+  /** agentInfo.name as given (agentName prefers the title), and the session capabilities Orca checks for `agy acp`. */
+  infoName?: string | null;
+  canResume?: boolean;
+  canList?: boolean;
 }
 
 function handshakeOf(init: Json): AcpHandshake {
   const info = (init.agentInfo ?? {}) as { name?: unknown; title?: unknown; version?: unknown };
-  const caps = (init.agentCapabilities ?? {}) as { loadSession?: unknown };
+  const caps = (init.agentCapabilities ?? {}) as { loadSession?: unknown; sessionCapabilities?: { resume?: unknown; list?: unknown } };
   const auth = Array.isArray(init.authMethods) ? init.authMethods as Array<{ id?: unknown; name?: unknown }> : [];
   return {
     protocolVersion: init.protocolVersion ?? null,
@@ -105,6 +110,9 @@ function handshakeOf(init: Json): AcpHandshake {
     agentVersion: typeof info.version === 'string' ? info.version : null,
     canLoadSession: caps.loadSession === true,
     authMethods: auth.map(m => String(m.name ?? m.id ?? '')).filter(Boolean),
+    infoName: typeof info.name === 'string' ? info.name : null,
+    canResume: Boolean(caps.sessionCapabilities?.resume),
+    canList: Boolean(caps.sessionCapabilities?.list),
   };
 }
 
@@ -177,7 +185,8 @@ export class AcpSession implements ShellSession {
   private readonly asked: string | null;
 
   constructor(private readonly o: AcpShellOptions, private readonly child: ChildProcessWithoutNullStreams, spec: SessionSpec) {
-    this.first = spec.systemPrompt.trim() ? spec.systemPrompt.trim() : null;
+    const prompt = withLanguageRule(spec.systemPrompt).trim();
+    this.first = prompt ? prompt : null;
     this.asked = spec.model ?? o.model ?? null;
     child.on('exit', (code, signal) => { this.exited = true; this.cancelApprovals(); this.dropTools(); this.emit({ type: 'exited', detail: `${o.label} exited (${code ?? signal ?? 'unknown'})` }); });
     child.on('error', err => { this.exited = true; this.emit({ type: 'exited', detail: `${o.label} failed: ${err.message}` }); });
@@ -472,12 +481,16 @@ export function describePermission(call: Json): { tool: string; detail: string }
   const changes = raw.changes;
   if (changes && typeof changes === 'object' && !Array.isArray(changes)) for (const p of Object.keys(changes)) paths.add(p);
   let command: string | null = null;
-  if (typeof raw.command === 'string') command = raw.command;
+  // Antigravity names it CommandLine (Orca acp-dialects/antigravity-dialect.ts reads these three spellings, and Cwd).
+  const named = [raw.command, raw.CommandLine, raw.command_line, raw.commandLine].find(v => typeof v === 'string' && v.trim());
+  if (typeof named === 'string') command = named;
   else if (Array.isArray(raw.command)) command = (raw.command as unknown[]).map(String).join(' ');
   if (command) {
     const m = SHELL_WRAP.exec(command);
     if (m) command = m[1].replace(/^["']|["']$/g, '');
     lines.push('Command: ' + command);
+    const cwd = [raw.Cwd, raw.WorkingDirectory, raw.working_dir, raw.workingDir, raw.cwd].find(v => typeof v === 'string' && v.trim());
+    if (typeof cwd === 'string') lines.push('Cwd: ' + cwd);
   }
   for (const p of paths) lines.push('Path: ' + p);
   const tool = kind === 'edit' ? 'edit' : kind === 'execute' || command ? 'bash' : kind;
@@ -546,7 +559,7 @@ export class AcpShell implements AgentShell {
     let env: Record<string, string> = { ...(this.options.env ?? {}), ...(light?.env ?? {}) };
     const magpie = viaMagpie(spec.model ?? this.options.model);
     if (magpie) {
-      if (!this.options.magpie) throw new Error(`${this.options.label} 不能经 Magpie 换别家的模型`);
+      if (!this.options.magpie) throw new Error(tr('{0} 不能经 Magpie 换别家的模型', [this.options.label]));
       env = { ...env, ...await this.options.magpie.wire(await this.options.magpie.origin(), magpie, env, spec.effort ?? this.options.effort) };
     }
     const child = startChild({ ...this.options, env }, spec.cwd);

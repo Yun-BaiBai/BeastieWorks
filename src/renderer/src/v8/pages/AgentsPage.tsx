@@ -1,3 +1,4 @@
+import { tr } from '@shared/i18n';
 import './agents.css';
 import { useEffect, useRef, useState } from 'react';
 import type { AgentQuota, ChatTurn, ChoiceList, RosterRow, RosterView, SessionChoices, SignInFlow } from '@shared/v8/agents';
@@ -9,8 +10,8 @@ import type { Hero } from './Pages';
 
 interface Line { who: 'you' | 'agent' | 'note'; text: string }
 
-const STATE: Record<RosterRow['state'], string> = { ready: '已装好', missing_program: '缺程序', not_installed: '没装', unsupported: '装不了' };
-const SIGN: Record<RosterRow['signIn'], string> = { yes: '已登录', no: '未登录', unknown: '登录未知' };
+const STATE: Record<RosterRow['state'], string> = { ready: tr('已装好'), missing_program: tr('缺程序'), not_installed: tr('没装'), unsupported: tr('装不了') };
+const SIGN: Record<RosterRow['signIn'], string> = { yes: tr('已登录'), no: tr('未登录'), unknown: tr('登录未知') };
 
 /**
  * Every agent the app knows: which are on this computer, which are signed in, and a plain chat with one of them.
@@ -60,7 +61,7 @@ export function AgentsPage({ hero }: { hero: Hero }) {
   const choose = (kind: 'model' | 'effort', value: string) => {
     if (!agent) return;
     const id = agent.id;
-    window.cth.v8.agentChoose(id, kind, value).then(c => setChoices(old => ({ ...old, [id]: c })), e => add(id, [{ who: 'note', text: '没换成：' + (e instanceof Error ? e.message : String(e)) }]));
+    window.cth.v8.agentChoose(id, kind, value).then(c => setChoices(old => ({ ...old, [id]: c })), e => add(id, [{ who: 'note', text: tr('没换成：') + (e instanceof Error ? e.message : String(e)) }]));
   };
 
   const send = () => {
@@ -71,18 +72,18 @@ export function AgentsPage({ hero }: { hero: Hero }) {
     window.cth.v8.agentSay(id, said).then((t: ChatTurn) => {
       const more: Line[] = [];
       if (t.reply) more.push({ who: 'agent', text: t.reply });
-      if (t.refused.length) more.push({ who: 'note', text: '它想做这些事，这里一律不让：' + t.refused.join('、') });
-      if (t.error) more.push({ who: 'note', text: '没答完：' + t.error });
-      if (!more.length) more.push({ who: 'note', text: '它答完了，但没有说话。' });
+      if (t.refused.length) more.push({ who: 'note', text: tr('它想做这些事，这里一律不让：') + t.refused.join(tr('、')) });
+      if (t.error) more.push({ who: 'note', text: tr('没答完：') + t.error });
+      if (!more.length) more.push({ who: 'note', text: tr('它答完了，但没有说话。') });
       add(id, more);
-    }, e => add(id, [{ who: 'note', text: '没发出去：' + (e instanceof Error ? e.message : String(e)) }])).finally(() => setWaiting(null));
+    }, e => add(id, [{ who: 'note', text: tr('没发出去：') + (e instanceof Error ? e.message : String(e)) }])).finally(() => setWaiting(null));
   };
 
-  return <section className="v8p v8a" aria-label="agent 名单">
+  return <section className="v8p v8a" aria-label={tr('agent 名单')}>
     <div className="v8a-head">
       <img className="v8-g v8p-hero" style={hero} src={art('alien', 'reading')} alt="" />
-      <div><span className="v8-cap">agent 名单 · 这台电脑</span><h1>谁在，谁能说话</h1>
-        <p className="v8m-sub">{view ? `装好的 ${here.length} 个，名单上一共 ${rows.length} 个。看名单和额度都不花额度。` : failed ? '名单没读出来：' + failed : '正在看这台电脑上有哪些 agent…'}</p></div>
+      <div><span className="v8-cap">{tr('agent 名单 · 这台电脑')}</span><h1>{tr('谁在，谁能说话')}</h1>
+        <p className="v8m-sub">{view ? tr('装好的 {0} 个，名单上一共 {1} 个。看名单和额度都不花额度。', [here.length, rows.length]) : failed ? tr('名单没读出来：') + failed : tr('正在看这台电脑上有哪些 agent…')}</p></div>
     </div>
 
     <div className="v8a-list" role="list">
@@ -93,38 +94,38 @@ export function AgentsPage({ hero }: { hero: Hero }) {
         <small>{r.note}</small>
         {r.state === 'ready' && <QuotaLine q={quotas[r.id]} />}
       </button>)}
-      {view && !shown.length && <p className="v8m-sub">这台电脑上还没有装好的 agent。</p>}
-      {view && <button type="button" className="v8-quiet-btn v8a-more" onClick={() => setAll(a => !a)}>{all ? '只看装好的' : `看全部 ${rows.length} 个（含没装的）`}</button>}
-      {failed && <button type="button" className="v8-back" onClick={load}>再读一次</button>}
+      {view && !shown.length && <p className="v8m-sub">{tr('这台电脑上还没有装好的 agent。')}</p>}
+      {view && <button type="button" className="v8-quiet-btn v8a-more" onClick={() => setAll(a => !a)}>{all ? tr('只看装好的') : tr('看全部 {0} 个（含没装的）', [rows.length])}</button>}
+      {failed && <button type="button" className="v8-back" onClick={load}>{tr('再读一次')}</button>}
       {view && <QuotaRuleBox />}
-      {view && here.length > 0 && <button type="button" className="v8-quiet-btn v8a-more" onClick={() => { setQuotas({}); readQuotas(rows, true); }}>重新读额度</button>}
+      {view && here.length > 0 && <button type="button" className="v8-quiet-btn v8a-more" onClick={() => { setQuotas({}); readQuotas(rows, true); }}>{tr('重新读额度')}</button>}
     </div>
 
     <div className="v8a-chat">
       {agent ? <>
-        <span className="v8-cap">跟 {agent.name} 说一句</span>
+        <span className="v8-cap">{tr('跟 ')}{agent.name} {tr(' 说一句')}</span>
         {agent.state === 'ready' && agent.signIn === 'no' && agent.canSignIn && <SignInBox id={agent.id} name={agent.name} onDone={load} />}
         <InstallBox row={agent} onDone={v => { setView(v); readQuotas(v.rows, false); }} />
         {typeof offered === 'object' && (offered.model || offered.effort) && <div className="v8a-pick">
-          {offered.model && <Pick label="模型" list={offered.model} disabled={!!waiting} onChange={v => choose('model', v)} />}
-          {offered.effort && <Pick label="推理档位" list={offered.effort} disabled={!!waiting} onChange={v => choose('effort', v)} />}
+          {offered.model && <Pick label={tr('模型')} list={offered.model} disabled={!!waiting} onChange={v => choose('model', v)} />}
+          {offered.effort && <Pick label={tr('推理档位')} list={offered.effort} disabled={!!waiting} onChange={v => choose('effort', v)} />}
         </div>}
-        {offered === undefined && agent.state === 'ready' && agent.signIn !== 'no' && <p className="v8m-sub">正在问它有哪些模型（第一次要等十几秒，不花额度）…</p>}
-        {typeof offered === 'string' && <p className="v8a-line is-note"><span>说明</span>没读到它有哪些模型：{offered}</p>}
+        {offered === undefined && agent.state === 'ready' && agent.signIn !== 'no' && <p className="v8m-sub">{tr('正在问它有哪些模型（第一次要等十几秒，不花额度）…')}</p>}
+        {typeof offered === 'string' && <p className="v8a-line is-note"><span>{tr('说明')}</span>{tr('没读到它有哪些模型：')}{offered}</p>}
         <div className="v8a-talk" aria-live="polite">
           {!talk.length && !(agent.signIn === 'no' && agent.canSignIn) && <p className="v8m-sub">{agent.state === 'ready'
-            ? '发一句话，看它回。这是真的消息，会用掉它的一点额度。它在一个空文件夹里，读写文件和跑命令的请求一律不让。'
+            ? tr('发一句话，看它回。这是真的消息，会用掉它的一点额度。它在一个空文件夹里，读写文件和跑命令的请求一律不让。')
             : agent.note}</p>}
-          {talk.map((l, i) => <p key={i} className={'v8a-line is-' + l.who}><span>{l.who === 'you' ? '你' : l.who === 'agent' ? agent.name : '说明'}</span>{l.text}</p>)}
-          {waiting === agent.id && <p className="v8a-line is-note"><span>说明</span>等它回话…</p>}
+          {talk.map((l, i) => <p key={i} className={'v8a-line is-' + l.who}><span>{l.who === 'you' ? tr('你') : l.who === 'agent' ? agent.name : tr('说明')}</span>{l.text}</p>)}
+          {waiting === agent.id && <p className="v8a-line is-note"><span>{tr('说明')}</span>{tr('等它回话…')}</p>}
           <div ref={end} />
         </div>
         <div className="v8p-ask">
           <input value={text} disabled={agent.state !== 'ready'} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) send(); }}
-            placeholder={agent.state === 'ready' ? '比如：你好，回两个字' : '这个 agent 现在说不了话'} aria-label={'跟 ' + agent.name + ' 说话'} />
-          <button type="button" className="v8-send" disabled={agent.state !== 'ready' || !!waiting || !text.trim()} onClick={send}>发话</button>
+            placeholder={agent.state === 'ready' ? tr('比如：你好，回两个字') : tr('这个 agent 现在说不了话')} aria-label={tr('跟 ') + agent.name + tr(' 说话')} />
+          <button type="button" className="v8-send" disabled={agent.state !== 'ready' || !!waiting || !text.trim()} onClick={send}>{tr('发话')}</button>
         </div>
-      </> : <p className="v8m-sub">左边选一个 agent。</p>}
+      </> : <p className="v8m-sub">{tr('左边选一个 agent。')}</p>}
     </div>
   </section>;
 }
@@ -134,7 +135,7 @@ function Pick({ label, list, disabled, onChange }: { label: string; list: Choice
   const groups = [...new Set(list.choices.map(c => c.group))];
   return <label className="v8a-select"><span className="v8-cap">{label}</span>
     <select value={list.current ?? ''} disabled={disabled} onChange={e => onChange(e.target.value)}>
-      {list.current === null && <option value="" disabled>它自己默认的</option>}
+      {list.current === null && <option value="" disabled>{tr('它自己默认的')}</option>}
       {groups.map(g => g === null
         ? list.choices.filter(c => c.group === null).map(c => <option key={c.id} value={c.id}>{c.label}</option>)
         : <optgroup key={g} label={g}>{list.choices.filter(c => c.group === g).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</optgroup>)}
@@ -176,30 +177,30 @@ function SignInBox({ id, name, onDone }: { id: string; name: string; onDone(): v
 
   if (!flow || flow.phase === 'cancelled') {
     return <div className="v8a-signin">
-      <p>{name} 还没登录。点下面的按钮，它会打开官方的登录页，你在那里用自己的账号登录。小怪工坊不会看到也不会保存你的密码。</p>
-      <button type="button" className="v8-send" disabled={starting} onClick={start}>{starting ? '正在打开登录页…' : '去登录'}</button>
+      <p>{name} {tr(' 还没登录。点下面的按钮，它会打开官方的登录页，你在那里用自己的账号登录。小怪工坊不会看到也不会保存你的密码。')}</p>
+      <button type="button" className="v8-send" disabled={starting} onClick={start}>{starting ? tr('正在打开登录页…') : tr('去登录')}</button>
       {problem && <small className="v8a-problem">{problem}</small>}
     </div>;
   }
-  if (flow.phase === 'succeeded') return <div className="v8a-signin is-ok"><p>登录好了。现在可以跟 {name} 说话了。</p></div>;
+  if (flow.phase === 'succeeded') return <div className="v8a-signin is-ok"><p>{tr('登录好了。现在可以跟 ')}{name} {tr(' 说话了。')}</p></div>;
   if (flow.phase !== 'waiting') {
-    return <div className="v8a-signin"><p>没登录上：{flow.message ?? '原因没说。'}</p>
-      <button type="button" className="v8-send" onClick={start}>再试一次</button></div>;
+    return <div className="v8a-signin"><p>{tr('没登录上：')}{flow.message ?? tr('原因没说。')}</p>
+      <button type="button" className="v8-send" onClick={start}>{tr('再试一次')}</button></div>;
   }
   return <div className="v8a-signin">
     {flow.code ? <>
-      <p><button type="button" className="v8a-link" disabled={!flow.url} onClick={() => flow.url && void window.cth.openExternal(flow.url)}>点这里打开 {name} 的登录页</button>，用你自己的账号登录，再在页面上输入这串代码：</p>
+      <p><button type="button" className="v8a-link" disabled={!flow.url} onClick={() => flow.url && void window.cth.openExternal(flow.url)}>{tr('点这里打开 ')}{name} {tr(' 的登录页')}</button>{tr('，用你自己的账号登录，再在页面上输入这串代码：')}</p>
       <p className="v8a-code">{flow.code}</p>
-      <p>输入完等几秒，这里会自己变成登录好了。</p>
+      <p>{tr('输入完等几秒，这里会自己变成登录好了。')}</p>
     </> : <>
-    <p>浏览器里应该已经打开了登录页。如果没打开，<button type="button" className="v8a-link" disabled={!flow.url} onClick={() => flow.url && void window.cth.openExternal(flow.url)}>点这里打开</button>。</p>
-    <p>登录完，如果页面上给了一串代码，贴到下面；没给代码的话等几秒，这里会自己变成登录好了。</p>
+    <p>{tr('浏览器里应该已经打开了登录页。如果没打开，')}<button type="button" className="v8a-link" disabled={!flow.url} onClick={() => flow.url && void window.cth.openExternal(flow.url)}>{tr('点这里打开')}</button>{tr('。')}</p>
+    <p>{flow.paste === false ? tr('在那个页面上用你自己的账号登录，登录完等几秒，这里会自己变成登录好了。') : tr('登录完，如果页面上给了一串代码，贴到下面；没给代码的话等几秒，这里会自己变成登录好了。')}</p>
     </>}
-    {!flow.code && <div className="v8p-ask">
-      <input value={code} onChange={e => setCode(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) send(); }} placeholder="登录页给的代码" aria-label="登录页给的代码" />
-      <button type="button" className="v8-send" disabled={!code.trim()} onClick={send}>交代码</button>
+    {!flow.code && flow.paste !== false && <div className="v8p-ask">
+      <input value={code} onChange={e => setCode(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) send(); }} placeholder={tr('登录页给的代码')} aria-label={tr('登录页给的代码')} />
+      <button type="button" className="v8-send" disabled={!code.trim()} onClick={send}>{tr('交代码')}</button>
     </div>}
-    <button type="button" className="v8-quiet-btn" onClick={() => { void window.cth.v8.agentSignInCancel(id).then(() => setFlow(null)); }}>取消</button>
+    <button type="button" className="v8-quiet-btn" onClick={() => { void window.cth.v8.agentSignInCancel(id).then(() => setFlow(null)); }}>{tr('取消')}</button>
     {problem && <small className="v8a-problem">{problem}</small>}
   </div>;
 }

@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n';
 import type Database from 'better-sqlite3';
 import type {
   AssignmentEnd, AssignmentStatus, Delivery, Launch, Report, ReportKind, ReviewRow, ReviewVerdict, SlotConfig, TicketState, TicketView, V8Message,
@@ -44,15 +45,15 @@ export interface SchedulerOptions {
 
 const MAX_SAY = 20000;
 const TITLE_MAX = 40;
-const RETRY_NOTE = '老板让它再试一次';
-const QUOTA_NOTE = '账号额度用完，等额度：';
-const PARK_NOTE = '老板让它先停下等额度：';
+const RETRY_NOTE = tr('老板让它再试一次');
+const QUOTA_NOTE = tr('账号额度用完，等额度：');
+const PARK_NOTE = tr('老板让它先停下等额度：');
 const RESUME_NOTE: Record<QuotaResume, string> = {
-  reset: '额度恢复了，接着干。先检查目录和提交记录，再决定从哪里继续。',
-  boss: '老板让它现在接着干。先检查目录和提交记录，再决定从哪里继续。',
-  account: '老板给它换了账号，接着干。先检查目录和提交记录，再决定从哪里继续。',
-  model: '老板给它换了模型，接着干。先检查目录和提交记录，再决定从哪里继续。',
-  effort: '老板给它换了推理档位，接着干。先检查目录和提交记录，再决定从哪里继续。',
+  reset: tr('额度恢复了，接着干。先检查目录和提交记录，再决定从哪里继续。'),
+  boss: tr('老板让它现在接着干。先检查目录和提交记录，再决定从哪里继续。'),
+  account: tr('老板给它换了账号，接着干。先检查目录和提交记录，再决定从哪里继续。'),
+  model: tr('老板给它换了模型，接着干。先检查目录和提交记录，再决定从哪里继续。'),
+  effort: tr('老板给它换了推理档位，接着干。先检查目录和提交记录，再决定从哪里继续。'),
 };
 const RESUME_NOTES = new Set(Object.values(RESUME_NOTE));
 /** Why a ticket waiting for quota goes on. */
@@ -60,8 +61,8 @@ export type QuotaResume = 'reset' | 'boss' | 'account' | 'model' | 'effort';
 export interface QuotaWait { ticketId: number; assignmentId: number; since: number; resetsAt: number | null; detail: string }
 /** Per-ticket supply override: which model and which account its sessions use (v8 计划书 S2.3). */
 export interface TicketSupply { model: string | null; account: string | null; effort: string | null }
-const REVIEW_NOTE = '审查没通过：';
-const DEFAULT_SLOTS: SlotConfig[] = [{ id: 'slot-1', label: '工位 01', model: null, emergency: false }];
+const REVIEW_NOTE = tr('审查没通过：');
+const DEFAULT_SLOTS: SlotConfig[] = [{ id: 'slot-1', label: tr('工位 01'), model: null, emergency: false }];
 
 export class Scheduler {
   private readonly now: () => number;
@@ -134,7 +135,7 @@ export class Scheduler {
       const abort = (this.db.prepare("SELECT id FROM v8_assignments WHERE ticket_id=? AND status='RUNNING'").pluck().all(ticketId) as number[]);
       this.db.prepare(`UPDATE v8_assignments SET status='ENDED',ended_at=?,end_reason='stopped' WHERE ticket_id=? AND status IN ('PENDING','RUNNING')`).run(now, ticketId);
       this.db.prepare("UPDATE v8_tickets SET ended_at=?,end_kind='stopped' WHERE id=?").run(now, ticketId);
-      this.insertMessage(ticketId, null, 'system', 'note', '老板叫停了这张工单');
+      this.insertMessage(ticketId, null, 'system', 'note', tr('老板叫停了这张工单'));
       return { abort };
     });
   }
@@ -146,7 +147,7 @@ export class Scheduler {
     this.tx(() => {
       if (this.state(ticketId) !== 'REVIEW') throw new Error('V8_NOT_AWAITING_REVIEW');
       this.db.prepare("UPDATE v8_tickets SET ended_at=?,end_kind='done' WHERE id=?").run(this.now(), ticketId);
-      this.insertMessage(ticketId, null, 'system', 'note', '老板收下了结果');
+      this.insertMessage(ticketId, null, 'system', 'note', tr('老板收下了结果'));
     });
   }
 
@@ -260,7 +261,7 @@ export class Scheduler {
     return this.tx(() => {
       const a = this.assignment(assignmentId);
       if (a.status !== 'RUNNING') throw new Error('V8_ASSIGNMENT_NOT_RUNNING');
-      const detail = (info.detail || '额度用完').trim().slice(0, 500);
+      const detail = (info.detail || tr('额度用完')).trim().slice(0, 500);
       const resets = info.resetsAt !== null && Number.isSafeInteger(info.resetsAt) && info.resetsAt > 0 ? info.resetsAt : null;
       this.endAssignment(a.id, 'exited');
       this.db.prepare('INSERT INTO v8_quota_waits(ticket_id,assignment_id,resets_at,detail,created_at) VALUES(?,?,?,?,?)').run(a.ticket_id, a.id, resets, detail, this.now());
@@ -337,7 +338,7 @@ export class Scheduler {
     return this.tx(() => {
       const a = this.assignment(assignmentId);
       if (a.status !== 'RUNNING') return null;
-      const reason = '小怪没交报告就停了：' + (typeof detail === 'string' && detail.trim() ? detail.trim().slice(0, 500) : '原因未知');
+      const reason = tr('小怪没交报告就停了：') + (typeof detail === 'string' && detail.trim() ? detail.trim().slice(0, 500) : tr('原因未知'));
       this.insertMessage(a.ticket_id, a.id, 'system', 'report', JSON.stringify({ kind: 'failed', reason } satisfies Report), 'not_required');
       this.endAssignment(a.id, 'exited');
       return this.state(a.ticket_id);
@@ -357,7 +358,7 @@ export class Scheduler {
       const fresh: number[] = [];
       for (const a of running) {
         this.db.prepare("UPDATE v8_assignments SET status='INTERRUPTED',ended_at=?,end_reason='restart' WHERE id=?").run(now, a.id);
-        this.insertMessage(a.ticket_id, a.id, 'system', 'note', '应用重启，这次派工被打断了');
+        this.insertMessage(a.ticket_id, a.id, 'system', 'note', tr('应用重启，这次派工被打断了'));
         fresh.push(this.newAssignment(a.ticket_id, { urgent: URGENT_NONE, recovery: true }));
       }
       return fresh;
@@ -393,7 +394,7 @@ export class Scheduler {
       if (verdict === 'passed') return 'passed';
       const rejections = this.db.prepare("SELECT COUNT(*) FROM v8_reviews WHERE ticket_id=? AND verdict='rejected'").pluck().get(m.ticket_id) as number;
       if (rejections >= MAX_REVIEW_REJECTIONS) {
-        this.insertMessage(m.ticket_id, null, 'system', 'note', `审查打回了 ${rejections} 次，交给老板决定：${v.reason}`);
+        this.insertMessage(m.ticket_id, null, 'system', 'note', tr('审查打回了 {0} 次，交给老板决定：{1}', [rejections, v.reason]));
         return 'escalated';
       }
       const id = this.newAssignment(m.ticket_id, { urgent: URGENT_REWORK, recovery: false });
@@ -411,7 +412,7 @@ export class Scheduler {
       const m = this.message(reportMessageId);
       if (m.kind !== 'report' || m.ticket_id === null || m.review !== 'pending') return false;
       this.db.prepare("UPDATE v8_messages SET review='not_required' WHERE id=?").run(m.id);
-      this.insertMessage(m.ticket_id, null, 'system', 'note', '审查没给结论，直接交给老板：' + (why.trim() || '原因未知').slice(0, 300));
+      this.insertMessage(m.ticket_id, null, 'system', 'note', tr('审查没给结论，直接交给老板：') + (why.trim() || tr('原因未知')).slice(0, 300));
       return true;
     });
   }
@@ -427,7 +428,7 @@ export class Scheduler {
       if (!m || this.ticketRow(ticketId).end_kind || (JSON.parse(m.body) as Report).kind !== 'done' || m.review !== 'not_required') return false;
       if (this.db.prepare('SELECT COUNT(*) FROM v8_reviews WHERE report_message_id=?').pluck().get(m.id)) return false;
       this.db.prepare("UPDATE v8_messages SET review='pending' WHERE id=?").run(m.id);
-      this.insertMessage(ticketId, null, 'system', 'note', '老板要求重新审一次。');
+      this.insertMessage(ticketId, null, 'system', 'note', tr('老板要求重新审一次。'));
       return true;
     });
   }
@@ -557,7 +558,7 @@ export class Scheduler {
     if (t.end_kind === 'stopped') throw new Error('V8_TICKET_STOPPED');
     if (t.end_kind === 'done') {
       this.db.prepare('UPDATE v8_tickets SET ended_at=NULL,end_kind=NULL WHERE id=?').run(ticketId);
-      this.insertMessage(ticketId, null, 'system', 'note', '老板的新消息重新打开了这张工单');
+      this.insertMessage(ticketId, null, 'system', 'note', tr('老板的新消息重新打开了这张工单'));
     }
     const live = this.db.prepare("SELECT id,status FROM v8_assignments WHERE ticket_id=? AND status IN ('RUNNING','PENDING') ORDER BY id DESC LIMIT 1")
       .get(ticketId) as { id: number; status: AssignmentStatus } | undefined;
