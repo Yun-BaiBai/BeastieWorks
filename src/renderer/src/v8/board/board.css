@@ -85,9 +85,9 @@
 .v8-feed { padding: 14px 16px; overflow: hidden; position: relative; }
 .v8-head { display: flex; justify-content: space-between; margin-bottom: 10px; }
 .v8-lines { display: flex; flex-direction: column; gap: 7px; }
-.v8-ln { display: grid; grid-template-columns: 44px 62px 1fr; gap: 8px; font: 500 12px/1.25 var(--mono); color: var(--ink2); white-space: nowrap; overflow: hidden; animation: v8-slide .35s ease; }
+.v8-ln { display: grid; grid-template-columns: 44px 92px 1fr; gap: 8px; font: 500 12px/1.25 var(--mono); color: var(--ink2); white-space: nowrap; overflow: hidden; animation: v8-slide .35s ease; }
 .v8-ln time { color: var(--ink3); }
-.v8-ln b { font-weight: 800; color: var(--ink); }
+.v8-ln b { font-weight: 800; color: var(--ink); overflow: hidden; text-overflow: ellipsis; }  /* a long lead name (Lead Gremlin, or one the boss chose) is cut, never drawn over the text */
 .v8-ln b.is-slot { color: var(--teal); } .v8-ln b.is-question { color: var(--brick); } .v8-ln b.is-review { color: var(--moss); }
 .v8-ln span { overflow: hidden; text-overflow: ellipsis; }
 @keyframes v8-slide { from { opacity: 0; transform: translateY(-8px); } }
