@@ -87,14 +87,16 @@ export const LEAD_SYSTEM = [
   '6. 老板要的是“出方案”“想几个办法”“比比怎么做”，而不是直接动手，就用 open_roundtable 开圆桌，不开工单：几只小怪会各自独立出方案。方案到了会有消息来找你，照消息说的用 submit_plans 整理成 Plan A / Plan B，不替老板选。',
   '7. 老板要一件大活分几道工序先后做（上一道做完下一道才能做，比如剪辑 → 配音 → 特效），就用 open_chain 开工序链，按老板的说法列出各道，不开普通工单：第一道马上开工，后面每道等老板点“开下一道”。能同时做的几件事不是工序链，照常开工单。',
   '8. 默认一件事开一张工单，由一只小怪做完，不拆。只有活大到要干很久（不是几分钟、十几分钟的事），而且能拆成几件互不相干、可以同时做的部分时，才用 open_split 先开拆解：一只小怪出拆法，老板点头才开工。老板明说要拆，也用 open_split，值不值得拆由出拆法的小怪判断。小活一律照常开工单：拆开要多读几遍项目、多审几次，小活拆了只会更慢更贵。',
+  '9. 老板点名让某个工位、某只小怪或某个 agent 做（比如“让 2 号做”“给小黑”“让 Claude 那个做”），先用 list_desks 看有哪些工位，再在 open_ticket 里填 desk。那个工位在忙也照样填：工单会排队等它，不换别的工位，你告诉老板在排它的队。老板没点名就不填 desk，哪个工位空着给哪个。',
 ].join('\n');
 
 const id = (description: string) => ({ type: 'integer', description });
 export const LEAD_TOOLS: HostTool[] = [
   { name: 'list_tickets', description: '看所有工单的状态。', parameters: { type: 'object', properties: {} } },
+  { name: 'list_desks', description: '看有哪些工位：编号、名字、用的 agent 和模型、现在空着还是在忙。', parameters: { type: 'object', properties: {} } },
   {
     name: 'open_ticket', description: '用老板的一条消息开一张工单。原话由系统从那条消息里复制。',
-    parameters: { type: 'object', properties: { message_id: id('老板那条消息的编号'), routing_note: { type: 'string', description: '最多 30 个词，只写去向' }, title: { type: 'string', description: '可选，40 字以内的短标题' } }, required: ['message_id', 'routing_note'] },
+    parameters: { type: 'object', properties: { message_id: id('老板那条消息的编号'), routing_note: { type: 'string', description: '最多 30 个词，只写去向' }, title: { type: 'string', description: '可选，40 字以内的短标题' }, desk: { type: 'string', description: '可选。老板点名的工位：编号（1、2…）或工位名字，先用 list_desks 看。老板没点名就不填' } }, required: ['message_id', 'routing_note'] },
   },
   {
     name: 'forward_to_ticket', description: '把老板的一条消息原样转给一张工单。',

@@ -9,6 +9,8 @@ import type { TicketState } from '@shared/v8/tickets';
  */
 export const WORKERS: GremlinCast[] = ['alien', 'tri', 'jelly', 'blob', 'fuzz', 'spike'];
 export const slotCast = (order: number): GremlinCast => WORKERS[((order % WORKERS.length) + WORKERS.length) % WORKERS.length];
+/** A desk's gremlin: the one the boss picked (requirement 61), else by its order. */
+export const deskCast = (s: { order: number; look?: string }): GremlinCast => (WORKERS as string[]).includes(s.look ?? '') ? s.look as GremlinCast : slotCast(s.order);
 
 export interface CrewMember { cast: GremlinCast; name: string; title: string; role: 'lead' | 'reviewer' | 'worker' }
 /** Everyone in the workshop, for the badge wall. */

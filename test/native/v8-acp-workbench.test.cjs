@@ -49,7 +49,7 @@ test('the lead opens a ticket with its own tool; a gremlin does it in its own fo
   // Each role started its own agent; the lead got only the lead's tools, the gremlin only the report tool.
   assert.ok(launched.includes('lead-agent') && launched.includes('worker-agent'));
   const seen = fs.readFileSync(path.join(log, 'tools.txt'), 'utf8');
-  assert.match(seen, /lead-room: list_tickets,open_ticket,forward_to_ticket,stop_ticket,move_to_front,reply_to_boss,ask_boss/);
+  assert.match(seen, /lead-room: list_tickets,list_desks,open_ticket,forward_to_ticket,stop_ticket,move_to_front,reply_to_boss,ask_boss/);
   assert.match(seen, /: submit_report\n/);
   // The lead's session was put in the agent's closed mode, the gremlin's in the open one.
   const modes = fs.readFileSync(path.join(log, 'modes.txt'), 'utf8');

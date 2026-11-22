@@ -21,7 +21,10 @@ export interface DispatcherOptions {
   /** The skill library (第 6 步): a gremlin's brief names the skills that fit, and it can list and fetch them. */
   /** A10: the project's notebook, under the boss's words. */
   notes?: { briefLines(): string[] };
-  skills?: { briefLines(about: string): string[]; call(name: string, args: unknown): { ok: true; text: string } | { ok: false; error: string }; tools: HostTool[] };
+  /** slotId: the desk the gremlin works at, whose own skill choices apply (requirement 61). */
+  skills?: { briefLines(about: string, slotId?: string): string[]; call(name: string, args: unknown, slotId?: string): { ok: true; text: string } | { ok: false; error: string }; tools: HostTool[] };
+  /** The agent a desk's gremlin runs on (requirement 61: each desk its own). Unset or null: the dispatcher's own shell. */
+  shellFor?(slotId: string): AgentShell | null;
   /** The three-state probe (v8 计划书 S2.2): how often to look, and the limits. Defaults: every 30 s, 3 min, 90 min. */
   probe?: Partial<ProbeLimits> & { intervalMs?: number };
   clock?: () => number;
@@ -47,7 +50,7 @@ export type Activity =
 
 interface Live {
   ticketId: number; assignmentId: number; session: ShellSession; off: () => void; reported: boolean; nudged: boolean; stopping: boolean;
-  startedAt: number; lastAt: number; probe: ProbeStatus;
+  startedAt: number; lastAt: number; probe: ProbeStatus; slotId: string;
 }
 
 export class Dispatcher {
@@ -185,7 +188,7 @@ export class Dispatcher {
     let session: ShellSession | null = null;
     this.opening.add(ticketId);
     try {
-      session = await this.shell.open({
+      session = await (this.options.shellFor?.(slotId) ?? this.shell).open({
         role: 'worker', cwd: await this.options.workdir(ticketId), model: pin.model ?? slot?.model ?? null, sessionRef,
         ...(pin.effort ? { effort: pin.effort } : {}),
         ...(pin.account ? { supplyAccount: pin.account } : {}),
@@ -209,7 +212,7 @@ export class Dispatcher {
     // Stopped or closing while it was opening: the session goes, the gremlin never starts (C3 review, finding 6).
     if (this.closed || this.scheduler.state(ticketId) === 'STOPPED') { this.parked.delete(ticketId); await session.close().catch(() => undefined); return; }
     const t0 = this.now();
-    const l: Live = { ticketId, assignmentId, session, off: () => undefined, reported: false, nudged: false, stopping: false, startedAt: t0, lastAt: t0, probe: 'ACTIVE' };
+    const l: Live = { ticketId, assignmentId, session, off: () => undefined, reported: false, nudged: false, stopping: false, startedAt: t0, lastAt: t0, probe: 'ACTIVE', slotId };
     l.off = session.onEvent(e => { void this.onEvent(l, e); });
     this.live.set(assignmentId, l);
     this.emit({ type: 'launched', ticketId, assignmentId, slotId });
@@ -220,8 +223,8 @@ export class Dispatcher {
     const followUp = () => workerFollowUp({ recovery: ctx.recovery, riders: ctx.riders, retry: ctx.retry, reviewNotes: ctx.reviewNotes, resumed: ctx.resumed });
     session.prompt(resumed
       ? followUp()
-      : workerBrief(ticket, { recovery: ctx.recovery, riders: ctx.riders }) + (this.options.notes?.briefLines().join('\n') ?? '') + (this.options.skills?.briefLines(ticket.title + ' ' + ticket.originalRequest).join('\n') ?? '')
-        + (sessionRef ? '\n\n' + followUp() : ''));
+      : workerBrief(ticket, { recovery: ctx.recovery, riders: ctx.riders }) + (this.options.notes?.briefLines().join('\n') ?? '') + (this.options.skills?.briefLines(ticket.title + ' ' + ticket.originalRequest, slotId).join('\n') ?? '')
+        + (sessionRef ? '\n\n' + this.pastOf(ticketId) + followUp() : ''));
     // 等一等 while it was opening: it stops now, after the brief is in its conversation so it can pick up from there.
     const parked = this.parked.get(ticketId);
     // Not awaited: launch runs inside the pump chain, and pause pumps again.
@@ -252,7 +255,7 @@ export class Dispatcher {
       case 'host_tool': {
         if (e.name !== REPORT_TOOL.name && this.options.skills?.tools.some(t => t.name === e.name)) {
           let r: { ok: true; text: string } | { ok: false; error: string };
-          try { r = this.options.skills.call(e.name, e.args); } catch (err) { r = { ok: false, error: tr('技能库读不了：') + (err instanceof Error ? err.message : String(err)) }; }
+          try { r = this.options.skills.call(e.name, e.args, l.slotId); } catch (err) { r = { ok: false, error: tr('技能库读不了：') + (err instanceof Error ? err.message : String(err)) }; }
           l.session.respondHostTool(e.id, r);
           if (r.ok && e.name === 'use_skill') this.emit({ type: 'tool', ticketId: l.ticketId, name: tr('用技能 ') + String((e.args as { name?: unknown } | null)?.name ?? ''), args: null, phase: 'start' });
           return;
@@ -279,8 +282,11 @@ export class Dispatcher {
         const quota = e.status === 'error' ? quotaRefusal(e.detail, this.now()) : null;
         if (quota) {
           this.scheduler.assignmentOutOfQuota(l.assignmentId, { resetsAt: quota.resetsAt, detail: e.detail ?? '' });
+          // The old session is closed before the boss's rule may start the ticket again on a backup, so the two
+          // never run at once in the same folder (1.0 review, finding 9).
+          await this.finish(l, 'exited');
           this.emit({ type: 'quota', ticketId: l.ticketId, resetsAt: quota.resetsAt });
-          return this.finish(l, 'exited');
+          return;
         }
         this.scheduler.assignmentExited(l.assignmentId, e.status === 'error' ? tr('出错：') + (e.detail ?? '') : tr('两次停下都没交报告'));
         return this.finish(l, 'exited');
@@ -291,6 +297,26 @@ export class Dispatcher {
         return this.finish(l, l.stopping ? 'stopped' : 'exited');
       }
     }
+  }
+
+  /**
+   * A new session for a ticket that had one before (it could not be carried on): everything since the boss's first
+   * words, word for word and in order, so nothing he added or answered is lost (1.0 review, finding 6): his later
+   * words, the reasons review gave, and what the gremlin reported. Empty when there is nothing after the first words.
+   */
+  private pastOf(ticketId: number): string {
+    const t = this.scheduler.ticket(ticketId);
+    const lines: string[] = [];
+    for (const m of this.scheduler.messages(ticketId)) {
+      if (m.author === 'boss' && String(m.body) !== t.originalRequest) lines.push('老板：' + String(m.body));
+      else if (m.author === 'system' && typeof m.body === 'string') lines.push('（系统）' + m.body);
+      else if (m.kind === 'report' && typeof m.body === 'object') {
+        const r = m.body as Report;
+        lines.push('你之前的报告：' + (r.kind === 'done' ? '做完了。' + r.summary : r.kind === 'question' ? '问老板：' + r.question : r.kind === 'blocked' ? '卡住：' + r.where : r.kind === 'failed' ? '失败：' + r.reason : '说不用做：' + r.reason));
+      }
+    }
+    if (!lines.length) return '';
+    return '（之前的对话接不上了，这是这张工单到现在的经过，按时间顺序；以老板的话为准）\n' + lines.slice(-40).join('\n') + '\n\n';
   }
 
   private async finish(l: Live, why: 'reported' | 'exited' | 'stopped'): Promise<void> {

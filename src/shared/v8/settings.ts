@@ -28,7 +28,35 @@ export interface V8Settings {
   slots?: number;
   /** One extra slot used only for work the boss just spoke to, so the boss's words never queue. Default true. */
   emergencySlot?: boolean;
+  /**
+   * The desks (工位), each with its own gremlin (requirements 61, 63; 老板 2026-11-21). Unset: `slots` desks, each set up
+   * as `acp.worker` with `onQuota` (see desks.ts, which reads both). Applied while work goes on; a desk's change counts
+   * from its next ticket.
+   */
+  desks?: V8Desk[];
 }
+
+/** One desk and the gremlin at it, as the boss set them up. */
+export interface V8Desk {
+  /** Stable id, also the scheduler's slot id ('slot-1', …). */
+  id: string;
+  /** What the boss calls it. Unset: 工位 01, 工位 02, … by position. */
+  name?: string;
+  /** Which gremlin sits there (an art name, see renderer cast). Unset: by position. */
+  look?: string;
+  agent: string; model?: string; effort?: string;
+  /** Skills of the library this gremlin may not use (skill ids). Unset: every switched-on skill. */
+  skillsOff?: string[];
+  /** When its account runs out of quota. Unset: wait. */
+  onQuota?: V8QuotaPlan;
+}
+
+/**
+ * Running out of quota, per desk (requirement 63) and for the lead and the reviewer (requirement 66): wait for the
+ * reset, or go on with the backups in order, at most 5 (OpenMausBot's FallbackChain, ModelSection.tsx). Each backup is
+ * a model the same agent offers, its own or another maker's through Magpie. When the last one runs out too, it waits.
+ */
+export interface V8QuotaPlan { do: 'wait' | 'switch'; backups?: Array<{ model: string; effort?: string }> }
 
 /**
  * The boss's rule for running out of quota. wait: the ticket waits until the quota starts over (when the maker says), then
@@ -38,5 +66,7 @@ export interface V8Settings {
 export interface V8QuotaRule { do: 'wait' | 'switch'; model?: string; effort?: string }
 
 /** One role played by an agent from the roster: its id there (e.g. 'codex-acp'), and the model and effort it offers. */
-export interface V8AcpRole { agent: string; model?: string; effort?: string }
+export interface V8AcpRole { agent: string; model?: string; effort?: string;
+  /** The lead's and the reviewer's own rule for running out of quota (requirement 66). Unset: wait. Not used for acp.worker. */
+  onQuota?: V8QuotaPlan }
 

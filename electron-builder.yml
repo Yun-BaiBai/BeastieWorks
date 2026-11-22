@@ -47,6 +47,10 @@ asarUnpack:
   - "**/node_modules/better-sqlite3/**"
   - "**/node_modules/npm/**"
   - "out/main/host-tool-relay.cjs"
+  # 语音输入 (requirement 67): the speech engine and its native library run in a child process, from disk.
+  - "**/node_modules/transcribe-cpp/**"
+  - "**/node_modules/@transcribe-cpp/**"
+  - "**/node_modules/koffi/**"
 
 # Use the Electron already in node_modules instead of downloading it again, and keep the native module as it was
 # built for that Electron (rebuilding would download Electron's headers).

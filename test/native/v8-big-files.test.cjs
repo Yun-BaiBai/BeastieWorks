@@ -35,6 +35,8 @@ test('a new big output and an edited script are accepted; a removed big file is 
   const work = spaces.ensure(2);
   fs.writeFileSync(path.join(work, 'script.txt'), 'scene 1\nscene 2\n');
   fs.writeFileSync(path.join(work, 'cut.mp4'), Buffer.alloc(BIG_FILE + 10, 9));
+  // The linked footage is read-only while the ticket is open (C3 finding 2): removing it means making it writable first.
+  fs.chmodSync(path.join(work, 'footage', 'take 1.mp4'), 0o666);
   fs.rmSync(path.join(work, 'footage', 'take 1.mp4'));
   const changes = spaces.changes(2).sort((a, b) => a.path.localeCompare(b.path));
   assert.deepEqual(changes, [{ status: 'A', path: 'cut.mp4' }, { status: 'D', path: 'footage/take 1.mp4' }, { status: 'M', path: 'script.txt' }]);
@@ -52,7 +54,9 @@ test('a new big output and an edited script are accepted; a removed big file is 
 test('a big file the boss replaced in the project since the ticket started is not overwritten', t => {
   const { root, spaces } = project(t);
   const work = spaces.ensure(3);
-  // The gremlin replaces the footage with a new file (a new file, not a rewrite through the link).
+  // The gremlin replaces the footage with a new file (a new file, not a rewrite through the link); the linked file is
+  // read-only while the ticket is open, so it is made writable first.
+  fs.chmodSync(path.join(work, 'footage', 'take 1.mp4'), 0o666);
   fs.rmSync(path.join(work, 'footage', 'take 1.mp4'));
   fs.writeFileSync(path.join(work, 'footage', 'take 1.mp4'), Buffer.alloc(BIG_FILE + 2048, 1));
   // Meanwhile the boss replaced the project's copy too.

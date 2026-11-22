@@ -1,4 +1,5 @@
 import { tr } from '../../shared/i18n';
+import { rmTree } from './rmTree';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { fetchSkillFromSource, toSkillSlug, writeSkillFolder } from './skillFetch';
 import path from 'node:path';
@@ -146,22 +147,23 @@ export class SkillLibrary {
     this.keep(k);
   }
 
-  private enabled(): Found[] { const k = this.kept(); return this.scan().filter(s => on(k, s)); }
+  /** Switched on, less the ones a desk has turned off for its gremlin (requirement 61; skill ids). */
+  private enabled(off: readonly string[] = []): Found[] { const k = this.kept(); return this.scan().filter(s => on(k, s) && !off.includes(s.id)); }
 
   /** The switched-on skills that fit a piece of work, best first. Everything switched on when `about` is empty. */
-  fitting(about: string, max = 8): Array<{ name: string; description: string }> {
-    const on = this.enabled();
+  fitting(about: string, max = 8, off: readonly string[] = []): Array<{ name: string; description: string }> {
+    const on = this.enabled(off);
     const ranked = about.trim() ? rankSkills(on, about) : on;
     return ranked.slice(0, max).map(s => ({ name: s.name, description: oneLine(s.description) }));
   }
 
   /** The lines a gremlin's brief gets: the names of the skills that fit, and how to get one. Empty when none fit. */
-  briefLines(about: string): string[] {
-    const fit = this.fitting(about, 6);
+  briefLines(about: string, off: readonly string[] = []): string[] {
+    const fit = this.fitting(about, 6, off);
     if (!fit.length) {
       // The boss writes in Chinese and most skill descriptions are English, so word matching often finds nothing:
       // still say the library is there, with a few names.
-      const on = this.enabled();
+      const on = this.enabled(off);
       if (!on.length) return [];
       return ['', `技能库里开着 ${on.length} 个技能（比如 ${on.slice(0, 6).map(s => s.name).join('、')}）。用得上就用 list_skills 看说明，用 use_skill 取全文再照做。`];
     }
@@ -169,15 +171,15 @@ export class SkillLibrary {
   }
 
   /** A gremlin's call to list_skills or use_skill. */
-  call(name: string, args: unknown): { ok: true; text: string } | { ok: false; error: string } {
+  call(name: string, args: unknown, off: readonly string[] = []): { ok: true; text: string } | { ok: false; error: string } {
     const a = (args && typeof args === 'object' ? args : {}) as { about?: unknown; name?: unknown; file?: unknown };
     if (name === 'list_skills') {
-      const list = this.fitting(typeof a.about === 'string' ? a.about : '', 40);
+      const list = this.fitting(typeof a.about === 'string' ? a.about : '', 40, off);
       return { ok: true, text: list.length ? list.map(s => tr('- {0}：{1}', [s.name, s.description])).join('\n') : tr('技能库里没有对得上的技能。') };
     }
     if (name !== 'use_skill') return { ok: false, error: tr('没有这个工具：') + name };
     const wanted = typeof a.name === 'string' ? a.name.trim() : '';
-    const s = this.enabled().find(x => x.name === wanted || x.id === wanted);
+    const s = this.enabled(off).find(x => x.name === wanted || x.id === wanted);
     if (!s) return { ok: false, error: tr('技能库里没有能用的「{0}」。用 list_skills 看有哪些。', [wanted]) };
     const files = otherFiles(s.dir);
     let text: string;
@@ -211,7 +213,7 @@ export class SkillLibrary {
     if (!s) throw new Error('V8_SKILL_NOT_FOUND');
     const k = this.kept();
     delete k.enabled[id]; delete k.uses[id]; delete k.retold[id]; delete k.sources[id];
-    if (s.imported) { rmSync(s.dir, { recursive: true, force: true }); this.keep(k); this.scan(true); return 'deleted'; }
+    if (s.imported) { rmTree(s.dir); this.keep(k); this.scan(true); return 'deleted'; }
     k.removed[id] = true;
     this.keep(k);
     this.scan(true);

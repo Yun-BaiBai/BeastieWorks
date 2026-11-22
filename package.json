@@ -1,7 +1,7 @@
 {
   "name": "beastie-works",
   "productName": "Beastie Works",
-  "version": "0.9.1",
+  "version": "1.0.0",
   "private": true,
   "description": "小怪工坊：把本机的 AI agent 叫到一起，替你和朋友干活。",
   "main": "out/main/index.js",
@@ -25,21 +25,22 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^2.7.0",
-    "better-sqlite3": "^11.10.0",
+    "better-sqlite3": "13.2.0",
     "npm": "11.13.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "transcribe-cpp": "0.4.1"
   },
   "devDependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.107.0",
-    "@electron/rebuild": "^3.7.0",
+    "@electron/rebuild": "4.2.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.7.5",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.2",
-    "electron": "^32.2.0",
-    "electron-builder": "^25.1.8",
+    "electron": "43.8.7",
+    "electron-builder": "26.15.3",
     "electron-vite": "^2.3.0",
     "typescript": "^5.6.3",
     "vite": "^5.4.8"

@@ -32,21 +32,23 @@ export class WorkbenchHost {
   get(): Promise<V8Workbench> {
     if (!this.o.enabled()) return Promise.reject(new Error('V8_WORKBENCH_OFF'));
     const settings = this.o.settings() ?? {};
-    // The quota rule is read live by the workbench (quotaRule below), the slots and the spending cap are applied to the
+    // The quota rule is read live by the workbench (quotaRule below), the slots, the desks and the spending cap are applied to the
     // running workbench (applyLive), the skill folders are read by the library each time: changing any of them does
     // not restart the work.
-    const key = JSON.stringify({ ...settings, onQuota: undefined, slots: undefined, emergencySlot: undefined, maxCostUsd: undefined, skillRoots: undefined, notes: undefined });
+    // The lead's and the reviewer's own quota rules are read live too (rolePlan below), so they are left out of the key.
+    const roles = settings.acp ? { ...settings.acp, lead: { ...settings.acp.lead, onQuota: undefined }, ...(settings.acp.reviewer ? { reviewer: { ...settings.acp.reviewer, onQuota: undefined } } : {}) } : undefined;
+    const key = JSON.stringify({ ...settings, acp: roles, onQuota: undefined, slots: undefined, emergencySlot: undefined, maxCostUsd: undefined, skillRoots: undefined, notes: undefined, desks: undefined });
     if (this.bench && this.key === key && !this.pending) {
-      const live = JSON.stringify([settings.slots, settings.emergencySlot, settings.maxCostUsd]);
+      const live = JSON.stringify([settings.slots, settings.emergencySlot, settings.maxCostUsd, settings.desks]);
       if (live !== this.live) { this.live = live; const b = this.bench; return b.applyLive(settings).then(() => b); }
       return Promise.resolve(this.bench);
     }
-    this.live = JSON.stringify([settings.slots, settings.emergencySlot, settings.maxCostUsd]);
+    this.live = JSON.stringify([settings.slots, settings.emergencySlot, settings.maxCostUsd, settings.desks]);
     const prior = this.pending ?? Promise.resolve(this.bench);
     const next = prior.catch(() => null).then(async current => {
       if (current && this.key === key) return current;
       if (current) { this.bench = null; await current.shutdown().catch(() => undefined); }
-      const b = new V8Workbench({ stateDir: projectStateDir(this.o.base, settings.projectRoot ?? null), settings, demoPace: this.o.demoPace, quotaRule: () => this.o.settings()?.onQuota, notesOn: () => this.o.settings()?.notes !== false, ...(this.o.acpLaunch ? { acpLaunch: this.o.acpLaunch } : {}), ...(this.o.quotaOf ? { quotaOf: this.o.quotaOf } : {}), ...(this.o.skills ? { skills: this.o.skills } : {}) });
+      const b = new V8Workbench({ stateDir: projectStateDir(this.o.base, settings.projectRoot ?? null), settings, demoPace: this.o.demoPace, quotaRule: () => this.o.settings()?.onQuota, rolePlan: role => { const a = this.o.settings()?.acp; return role === 'lead' ? a?.lead.onQuota : (a?.reviewer ?? a?.lead)?.onQuota; }, notesOn: () => this.o.settings()?.notes !== false, ...(this.o.acpLaunch ? { acpLaunch: this.o.acpLaunch } : {}), ...(this.o.quotaOf ? { quotaOf: this.o.quotaOf } : {}), ...(this.o.skills ? { skills: this.o.skills } : {}) });
       b.onChange(this.o.onChange);
       await b.start();
       this.bench = b; this.key = key;

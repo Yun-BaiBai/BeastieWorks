@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { rmTree } from './rmTree';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -178,7 +179,7 @@ async function installBinary(dir: string, target: BinaryTarget, fetchImpl: typeo
     writeFileSync(kept, bytes);
   }
   const staging = dir + '.staging';
-  rmSync(staging, { recursive: true, force: true });
+  rmTree(staging);
   mkdirSync(staging, { recursive: true });
   const name = path.basename(url.pathname) || 'download';
   if (/\.(zip|tar\.gz|tgz|tar\.xz|tar\.bz2|tar)$/i.test(name)) {
@@ -192,7 +193,7 @@ async function installBinary(dir: string, target: BinaryTarget, fetchImpl: typeo
     mkdirSync(path.dirname(file), { recursive: true });
     writeFileSync(file, bytes, { mode: 0o755 });
   }
-  rmSync(dir, { recursive: true, force: true });
+  rmTree(dir);
   renameSync(staging, dir);
   rmSync(kept, { force: true });
 }
@@ -238,7 +239,7 @@ export async function downloadSize(agent: RegistryAgent, fetchImpl: typeof fetch
 export function uninstallAgent(p: RegistryPaths, agentId: string): void {
   const dir = path.join(p.installRoot, agentId);
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(agentId) || !inside(p.installRoot, dir)) throw new Error('V8_ARGUMENT');
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  rmTree(dir);
 }
 
 /** Install one agent into the app's folder. Signing in is still done by the person, in that agent. */
@@ -252,6 +253,6 @@ export async function installAgent(p: RegistryPaths, agent: RegistryAgent, fetch
   const now = availability(p, agent, key);
   if (now.state !== 'ready' || now.update) throw new Error('ACP_REGISTRY_INSTALL_INCOMPLETE');
   // An update: the older versions go once the new one is in place.
-  for (const v of installedVersions(p, agent.id)) if (v !== versionDir(agent.version)) rmSync(path.join(p.installRoot, agent.id, v), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  for (const v of installedVersions(p, agent.id)) if (v !== versionDir(agent.version)) rmTree(path.join(p.installRoot, agent.id, v));
   return now.launch;
 }

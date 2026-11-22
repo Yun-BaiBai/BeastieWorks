@@ -197,7 +197,7 @@ test('rule "switch" when it is already on the backup model: it waits instead of 
   b.say('加一个 hello.txt');
   await until(() => b.scheduler.tickets().length === 1, 'a ticket');
   const id = b.scheduler.tickets()[0].id;
-  await until(() => feedHas(b, /已经在用备用的 m1，也用完了，等额度/), 'the board to say it waits', 40000);
+  await until(() => feedHas(b, /备用的也用完了（最后在用 m1），等额度/), 'the board to say it waits', 40000);
   assert.equal(b.scheduler.ticket(id).state, 'WAITING_QUOTA');
 });
 

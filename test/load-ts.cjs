@@ -4,6 +4,25 @@ const fs = require('node:fs');
 const path = require('node:path');
 const ts = require('typescript');
 
+// The Node inside Electron 43 (24.22) no longer removes a read-only file on Windows, and git marks its object files
+// read-only: the tests' clean-up of their temporary folders makes those writable and tries again, as the app's own
+// rmTree does (src/main/v8/rmTree.ts).
+const plainRm = fs.rmSync;
+fs.rmSync = function rmSync(target, options) {
+  try { return plainRm.call(fs, target, options); }
+  catch (err) {
+    if (err?.code !== 'EPERM' || !options?.recursive) throw err;
+    const writable = p => {
+      try { fs.chmodSync(p, 0o666); } catch { /* gone */ }
+      let entries = [];
+      try { entries = fs.readdirSync(p, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) { const full = path.join(p, e.name); if (e.isDirectory()) writable(full); else { try { fs.chmodSync(full, 0o666); } catch { /* gone */ } } }
+    };
+    writable(String(target));
+    return plainRm.call(fs, target, options);
+  }
+};
+
 const cache = new Map();
 
 function resolveTs(fromDir, request) {

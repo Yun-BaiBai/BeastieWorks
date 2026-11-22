@@ -1,6 +1,8 @@
 import { tr } from '../../shared/i18n';
 import { homedir } from 'node:os';
-import { BrowserWindow, dialog, shell, type IpcMain } from 'electron';
+import { app, BrowserWindow, dialog, shell, type IpcMain } from 'electron';
+import { Speech } from './speech';
+import { deskLabel, desksOf } from '../../shared/v8/desks';
 import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { V8Settings } from '../../shared/v8/settings';
@@ -40,6 +42,8 @@ let antigravityLogin: AntigravityLogin | null = null;
 /** A9's sign-ins in progress (Grok, Kimi, Cursor), cancelled when the app quits. */
 const deviceLoginsOpen = new Map<string, DeviceLogin>();
 let magpie: MagpieService | null = null;
+/** 语音输入 on this computer (requirement 67). */
+let speech: Speech | null = null;
 
 function push(): void {
   if (timer) return;
@@ -246,7 +250,11 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
   ipcMain.handle('v8:agentUninstall', async (_e, id: unknown) => {
     const agentId = str(id);
     const s = deps.settings();
-    const roles = s?.shell === 'acp' && s.acp ? [[tr('主理小怪'), s.acp.lead], [tr('干活的小怪'), s.acp.worker], [tr('审查'), s.acp.reviewer ?? s.acp.lead]] as const : [];
+    // Every role and every desk that names it (1.0 review, finding 14): a desk's agent is in use as much as a role's.
+    const roles: Array<readonly [string, { agent: string } | undefined]> = s?.shell === 'acp' && s.acp
+      ? [[tr('主理小怪'), s.acp.lead], [tr('干活的小怪'), s.acp.worker], [tr('审查'), s.acp.reviewer ?? s.acp.lead],
+        ...desksOf(s).map((d, i) => [deskLabel(d, i, n => tr('工位 ') + n), d] as const)]
+      : [];
     const user = roles.find(([, r]) => r?.agent === agentId);
     if (user) throw new Error(tr('{0}正在用它，先换成别的 agent 再卸载。', [user[0]]));
     await chats!.close(agentId);
@@ -312,6 +320,14 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
     skills.saveRetold(str(id), str(agent), turn.reply);
     return libView();
   });
+  // 语音输入 (requirement 67): the model is downloaded only when the boss agrees; recognition is offline.
+  speech = new Speech({ dataDir: base, appRoot: app.getAppPath() });
+  ipcMain.handle('v8:speechStatus', () => speech!.status());
+  ipcMain.handle('v8:speechDownload', e => speech!.download(got => { if (!e.sender.isDestroyed()) e.sender.send('v8:speechProgress', got); }));
+  ipcMain.handle('v8:speechTranscribe', (_e, pcm: unknown) => {
+    if (!(pcm instanceof Float32Array)) throw new Error('V8_ARGUMENT');
+    return speech!.transcribe(pcm);
+  });
   ipcMain.handle('v8:agentChatClose', async (_e, id: unknown) => chats!.close(str(id)));
   /** Every project that has a workbench folder (for project switching). Reads only; opens nothing. */
   ipcMain.handle('v8:projects', () => {
@@ -341,5 +357,6 @@ export async function shutdownV8(): Promise<void> {
   antigravityLogin?.cancel();
   await magpie?.stop().catch(() => undefined);
   await chats?.close();
+  speech?.close();
   await host?.shutdown();
 }

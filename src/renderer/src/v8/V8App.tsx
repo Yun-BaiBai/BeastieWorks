@@ -16,6 +16,8 @@ import { SkillsPage } from './pages/SkillsPage';
 import { NotesPage } from './pages/NotesPage';
 import { setLeadName } from './leadName';
 import { SetupPage } from './pages/SetupPage';
+import { DeskPage } from './pages/DeskPage';
+import { RolePage } from './pages/RolePage';
 import { code, explain, useWorkbench } from './useWorkbench';
 import { art } from './gremlins';
 import { HERO_NAME, transition, type HeroKey, type View } from './views';
@@ -133,12 +135,18 @@ export function V8App() {
         {view.kind === 'board' && !firstRun && <Board data={{ ...data, now }} onSay={w.say} onAnswer={w.answer} onPick={w.pickPlan} onNextStage={w.nextStage} onSplit={w.decideSplit} open={go} heroKey={hero?.board ?? null} />}
         {view.kind === 'slot' && slot?.slot.ticket && <SlotPage d={slot} now={now} hero={heroStyle} harness={data.harness}
           onPoke={text => w.tell(slot.slot.ticket!.id, text)} onStop={() => w.stop(slot.slot.ticket!.id)}
-          onWait={() => w.waitForQuota(slot.slot.ticket!.id)} onModel={m => w.switchModel(slot.slot.ticket!.id, m)} onEffort={e => w.switchEffort(slot.slot.ticket!.id, e)} />}
+          onWait={() => w.waitForQuota(slot.slot.ticket!.id)} onModel={m => w.switchModel(slot.slot.ticket!.id, m)} onEffort={e => w.switchEffort(slot.slot.ticket!.id, e)}
+          onDesk={() => go({ kind: 'desk', slotId: slot.slot.slot.id }, null)} />}
+        {view.kind === 'desk' && <DeskPage key={view.slotId} slotId={view.slotId} data={data} hero={heroStyle}
+          onPick={id => setView({ kind: 'desk', slotId: id })} onOpenWork={id => go({ kind: 'slot', slotId: id }, null)} />}
         {view.kind === 'lead' && <LeadPage data={{ ...data, now }} hero={heroStyle} onSay={w.say} onAnswer={w.answer} onPick={w.pickPlan} onNextStage={w.nextStage} onSplit={w.decideSplit} onNotes={() => go({ kind: 'notes' }, null)}
-          onOpenDelivery={id => go({ kind: 'delivery', ticketId: id }, null)} onRetry={w.retry} onResume={w.resumeNow} />}
+          onOpenDelivery={id => go({ kind: 'delivery', ticketId: id }, null)} onRetry={w.retry} onResume={w.resumeNow}
+          onSettings={() => go({ kind: 'role', role: 'lead' }, null)} />}
         {view.kind === 'delivery' && delivery && <DeliveryPage d={delivery} hero={heroStyle} onAccept={() => w.accept(delivery.ticketId)} onReject={why => w.reject(delivery.ticketId, why)} onReviewAgain={() => { w.reviewAgain(delivery.ticketId); back(); }} />}
-        {view.kind === 'queue' && <QueuePage queue={data.queue} hero={heroStyle} onFront={w.front} onDrop={w.stop} onAdd={() => go({ kind: 'lead' }, null)} />}
-        {view.kind === 'review' && <ReviewPage d={review} enabled={data.review.enabled} hero={heroStyle} harness={data.harness} model={data.agents.review} />}
+        {view.kind === 'queue' && <QueuePage queue={data.queue} desks={Object.fromEntries(data.slots.map(s => [s.slot.id, s.slot.label]))} hero={heroStyle} onFront={w.front} onDrop={w.stop} onAdd={() => go({ kind: 'lead' }, null)} />}
+        {view.kind === 'review' && <ReviewPage d={review} enabled={data.review.enabled} hero={heroStyle} harness={data.harness} model={data.agents.review}
+          onSettings={() => go({ kind: 'role', role: 'reviewer' }, null)} />}
+        {view.kind === 'role' && <RolePage key={view.role} role={view.role} hero={heroStyle} />}
         {view.kind === 'ledger' && ledger && <LedgerPage d={ledger} hero={heroStyle} />}
         {view.kind === 'archive' && <ArchivePage items={archive} drawer={drawer} onDrawer={setDrawer} onOpen={id => go({ kind: 'timeline', ticketId: id }, null)} hero={heroStyle} />}
         {view.kind === 'timeline' && timeline && <TimelinePage title={timeline.title} items={timeline.items} hero={heroStyle} />}
@@ -146,11 +154,13 @@ export function V8App() {
         {view.kind === 'agents' && <AgentsPage hero={heroStyle} />}
         {view.kind === 'skills' && <SkillsPage hero={heroStyle} />}
         {view.kind === 'notes' && <NotesPage hero={heroStyle} project={data.project} />}
-        {(view.kind === 'setup' || firstRun) && <SetupPage hero={heroStyle} first={firstRun} onDone={() => { setView({ kind: 'board' }); w.refresh(); }} />}
+        {/* First run: the setup page stands in for the board only, so the agent list and the skills stay reachable for
+            installing and signing in first (1.0 review, finding 3). */}
+        {(view.kind === 'setup' || (firstRun && view.kind === 'board')) && <SetupPage hero={heroStyle} first={firstRun} onDone={() => { setView({ kind: 'board' }); w.refresh(); }} />}
         <TopBar project={data.project} stats={stats} onBack={view.kind === 'board' ? undefined : back}
           onStat={door => go({ kind: door }, null)} onAgents={view.kind === 'agents' ? undefined : () => go({ kind: 'agents' }, null)}
           onSkills={view.kind === 'skills' ? undefined : () => go({ kind: 'skills' }, null)}
-          onSetup={view.kind === 'setup' || firstRun ? undefined : () => go({ kind: 'setup' }, null)}
+          onSetup={view.kind === 'setup' || (firstRun && view.kind === 'board') ? undefined : () => go({ kind: 'setup' }, null)}
           projectSlot={<ProjectSwitcher name={data.project} working={stats.working} onSwitched={() => { setView({ kind: 'board' }); w.refresh(); }} />} />
         {w.notice ? <div className="v8-notice" role="status">{w.notice}</div>
           : w.error && <div className="v8-notice" role="status">{tr('连不上工作台，看到的是 ')}{lostAt.current} {tr(' 的样子，正在重试。')}{explain(w.error).slice(leadLength(explain(w.error)))}</div>}

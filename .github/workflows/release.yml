@@ -62,7 +62,7 @@ jobs:
           $tests = Get-ChildItem test -Recurse -Filter *.test.cjs | ForEach-Object { $_.FullName.Substring($PWD.Path.Length + 1).Replace('\', '/') }
           # electron.exe is a windowed program: PowerShell does not wait for it with `&`, so the first run ended the step
           # after 11 tests and still passed. Wait for it, as the local test script does, and require the summary line.
-          $p = Start-Process -FilePath node_modules/electron/dist/electron.exe -ArgumentList (@('--test') + $tests) -NoNewWindow -PassThru -RedirectStandardOutput test-out.log -RedirectStandardError test-err.log
+          $p = Start-Process -FilePath node_modules/electron/dist/electron.exe -ArgumentList (@('--test', '--test-reporter=tap') + $tests) -NoNewWindow -PassThru -RedirectStandardOutput test-out.log -RedirectStandardError test-err.log
           $null = $p.Handle
           $p.WaitForExit()
           Get-Content test-err.log -Tail 20

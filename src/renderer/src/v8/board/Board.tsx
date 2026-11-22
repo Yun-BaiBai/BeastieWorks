@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { BoardData, BoardSlot, RingMark } from '@shared/v8/board';
 import { WORK_STEPS } from '@shared/v8/board';
 import { TICKET_STATE_LABEL, type TicketView } from '@shared/v8/tickets';
-import { art, poseFor, slotCast, type AnyPose } from '../gremlins';
+import { art, deskCast, poseFor, type AnyPose } from '../gremlins';
 import { ProviderMark } from '../AgentBadge';
 import { HERO_NAME, type Door, type HeroKey } from '../views';
 import { MicButton } from '../MicButton';
@@ -66,11 +66,12 @@ export function Board({ data, onSay, onAnswer, onPick, onNextStage, onSplit, ope
           <img className="v8-g" src={art('boss', data.waiting.length ? 'pointing' : 'listening')} alt="" style={heroStyle(heroKey, 'lead')} />
           <div className="v8-plate"><i />{leadName()}{tr('在线 · 随时回话')}<ProviderMark model={data.agents.lead} size={15} /></div>
         </div>
-        {data.slots.slice(0, 2).map((s, i) => <SlotCard key={s.slot.id} s={s} pos={SLOT_POS[i]} now={data.now} open={open} heroKey={heroKey} />)}
-        {/* Desks past the two drawn ones: every one reachable (C3 review, finding 15). */}
-        {data.slots.length > 2 && <div className="v8-moreslots"><span className="v8-cap">{tr('另外 {0} 个工位', [data.slots.length - 2])}</span>
-          {data.slots.slice(2).map(s => <button key={s.slot.id} type="button" className={'v8-chip' + (s.ticket ? ' is-on' : '')} onClick={() => open?.({ kind: 'slot', slotId: s.slot.id }, null)}>
-            {s.slot.label}{s.ticket ? tr('：') + s.ticket.title.slice(0, 10) : tr(' · 空着')}</button>)}</div>}
+        {/* Two desks: the two big cards. More (up to 8, requirement 61): the same two places, each a grid of small desk
+            cards, so every desk is on the board and none covers the lead (boss's screenshot 2026-11-21). */}
+        {data.slots.length <= 2
+          ? data.slots.map((s, i) => <SlotCard key={s.slot.id} s={s} pos={SLOT_POS[i]} now={data.now} open={open} heroKey={heroKey} />)
+          : [data.slots.slice(0, Math.ceil(data.slots.length / 2)), data.slots.slice(Math.ceil(data.slots.length / 2))].map((half, i) =>
+            <div key={i} className="v8-minis" style={SLOT_POS[i]}>{half.map(s => <MiniDesk key={s.slot.id} s={s} open={open} />)}</div>)}
         <ReviewCard review={data.review} agents={data.agents} open={open} heroKey={heroKey} />
         {data.emergency && <EmergencyCard s={data.emergency} now={data.now} open={open} heroKey={heroKey} />}
         <QueueNotes queue={data.queue} resting={data.resting} now={data.now} open={open} />
@@ -171,9 +172,13 @@ function Flow({ data }: { data: BoardData }) {
     const [x, y] = ENDS[k], d = Math.hypot(x - HUB.x, y - HUB.y), t = (176 + (d - 176) / 2) / d;
     return { left: HUB.x + (x - HUB.x) * t + dx, top: HUB.y + (y - HUB.y) * t + dy };
   };
+  // More than two desks sit in two groups (requirement 61): each wire is labelled for its group.
+  const half = Math.ceil(data.slots.length / 2);
+  const group = (list: BoardSlot[]) => { const busy = list.filter(s => s.ticket).length; return tr('{0} 个工位 · {1}', [list.length, busy ? tr('{0} 个在干', [busy]) : tr('空闲')]); };
+  const many = data.slots.length > 2;
   const labels: Array<{ key: string; at: { left: number; top: number }; text: string; hot?: boolean }> = [
-    { key: 'slot0', at: mid('slot0', 14, 16), text: (data.slots[0]?.slot.label ?? tr('工位')) + ' · ' + tool(data.slots[0]), hot: !!data.slots[0]?.ticket },
-    ...(data.slots[1] ? [{ key: 'slot1', at: mid('slot1', -20, -8), text: data.slots[1].slot.label + ' · ' + tool(data.slots[1]), hot: !!data.slots[1].ticket }] : []),
+    { key: 'slot0', at: mid('slot0', 14, 16), text: many ? group(data.slots.slice(0, half)) : (data.slots[0]?.slot.label ?? tr('工位')) + ' · ' + tool(data.slots[0]), hot: many ? data.slots.slice(0, half).some(s => s.ticket) : !!data.slots[0]?.ticket },
+    ...(data.slots[1] ? [{ key: 'slot1', at: mid('slot1', -20, -8), text: many ? group(data.slots.slice(half)) : data.slots[1].slot.label + ' · ' + tool(data.slots[1]), hot: many ? data.slots.slice(half).some(s => s.ticket) : !!data.slots[1].ticket }] : []),
     { key: 'queue', at: mid('queue', -30, 12), text: tr('派活 ← 排队 {0}', [data.queue.length]) },
     { key: 'review', at: mid('review', 0, -16), text: data.review.enabled ? tr('审查 · 过 {0}', [data.review.passedToday]) : tr('审查没开'), hot: !!data.review.current },
     { key: 'waiting', at: mid('waiting', -24, -14), text: tr('交给你 {0}', [yours]), hot: yours > 0 },
@@ -206,8 +211,10 @@ function SlotCard({ s, pos, now, open, heroKey, compact = false }: { s: BoardSlo
   const t = s.ticket;
   const head = `${s.slot.label}${s.slot.model ? ' · ' + s.slot.model : ''}`;
   if (!t) {
-    return <article className="v8-card v8-sticker is-empty" style={pos} aria-label={head + tr(' · 空着')}>
-      <img className="v8-g" src={art(slotCast(s.order), 'long_wait')} alt="" />
+    // An empty desk opens its settings (requirement 61): who sits there, on which agent, with which skills.
+    const e = door(open, () => open?.({ kind: 'desk', slotId: s.slot.id }, null));
+    return <article {...e} className={'v8-card v8-sticker is-empty' + e.className} style={pos} aria-label={head + tr(' · 空着，点开设置')}>
+      <img className="v8-g" src={art(deskCast(s), 'long_wait')} alt="" />
       <div className="v8-row"><span className="v8-cap">{head}</span><span className="v8-pill">{tr('空着')}</span></div>
       <h3>{tr('没有活，等下一张工单')}</h3>
     </article>;
@@ -216,7 +223,7 @@ function SlotCard({ s, pos, now, open, heroKey, compact = false }: { s: BoardSlo
   const d = door(open, () => open?.({ kind: 'slot', slotId: s.slot.id }, key));
   return (
     <article {...d} className={'v8-card v8-sticker is-work' + (compact ? ' is-compact' : '') + d.className} style={pos} aria-label={`${head} · ${t.title}`}>
-      <img className="v8-g" src={art(slotCast(s.order), poseFor(t.state, s.phase))} alt="" style={heroStyle(heroKey, key)} />
+      <img className="v8-g" src={art(deskCast(s), poseFor(t.state, s.phase))} alt="" style={heroStyle(heroKey, key)} />
       {s.reporting && <span className="v8-tag">{tr('正在汇报')}</span>}
       <div className="v8-row"><span className="v8-cap v8-cap-agent"><ProviderMark model={s.slot.model} size={15} />{head}</span><span className="v8-pill is-go">{s.phase === 'checking' ? tr('在验证') : tr('在干活')}</span></div>
       <h3>{t.title}</h3>
@@ -228,6 +235,17 @@ function SlotCard({ s, pos, now, open, heroKey, compact = false }: { s: BoardSlo
       </div>
     </article>
   );
+}
+
+/** One desk among many: its gremlin, name, and what it is on. Busy opens its work; empty opens its settings. */
+function MiniDesk({ s, open }: { s: BoardSlot; open?: Door }) {
+  const t = s.ticket;
+  const d = door(open, () => open?.(t ? { kind: 'slot', slotId: s.slot.id } : { kind: 'desk', slotId: s.slot.id }, null));
+  return <article {...d} className={'v8-mini v8-sticker' + (t ? ' is-work' : ' is-empty') + d.className} aria-label={s.slot.label + (t ? ' · ' + t.title : tr(' · 空着，点开设置'))}>
+    <img className="v8-g" src={art(deskCast(s), t ? poseFor(t.state, s.phase) : 'long_wait')} alt="" />
+    <div><b>{s.slot.label}</b><small>{t ? (s.phase === 'checking' ? tr('在验证') : tr('在干活')) : tr('空着')}{s.slot.model ? ' · ' + s.slot.model : ''}</small>
+      <span>{t ? t.title : tr('没有活')}</span></div>
+  </article>;
 }
 
 function EmergencyCard({ s, now, open, heroKey }: { s: BoardSlot; now: number } & DoorProps) {
@@ -340,7 +358,7 @@ function TalkBar({ data, onSay, onAnswer, onPick, onNextStage, onSplit }: Omit<B
     </div>
     <div className="v8-say">
       <input ref={field} value={text} onChange={e => setText(e.target.value)} onKeyDown={key} aria-label={tr('跟') + leadName() + tr('说话')} placeholder={tr('跟') + leadName() + tr('说一句，比如：登录页的验证码收不到，查一下')} />
-      <MicButton input={field} />
+      <MicButton input={field} onText={t => setText(v => (v.trim() ? v.trimEnd() + ' ' : '') + t)} />
       <button type="button" className="v8-send" onClick={send}>{tr('发话')}</button>
     </div>
     <div className="v8-chips">

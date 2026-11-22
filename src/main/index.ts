@@ -5,7 +5,6 @@ import { existsSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { readAppConfig, writeAppConfig, type AppConfig } from './appConfig';
 import { registerV8Ipc, shutdownV8 } from './v8/ipc';
-import { dictate } from './dictate';
 import { language, setLanguage } from '../shared/i18n';
 
 /**
@@ -77,8 +76,6 @@ ipcMain.handle('i18n:set', (_event, choice: unknown) => {
   return language();
 });
 ipcMain.handle('config:update', (_event, patch: unknown): AppConfig => writeAppConfig(patch as Partial<AppConfig>));
-// A4: Windows' own voice typing for the text box the boss is in (dictate.ts).
-ipcMain.handle('app:dictate', () => dictate());
 ipcMain.handle('app:openExternal', (_event, url: unknown) =>
   typeof url === 'string' && openOutside(url) ? { ok: true } : { ok: false, error: 'blocked url' });
 

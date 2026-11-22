@@ -4,6 +4,10 @@ import { flushSync } from 'react-dom';
 export type View =
   | { kind: 'board' }
   | { kind: 'slot'; slotId: string }
+  /** A desk's own settings: its gremlin, agent, skills, quota plan (requirement 61). */
+  | { kind: 'desk'; slotId: string }
+  /** The lead's or the reviewer's own settings (requirements 64, 66). */
+  | { kind: 'role'; role: 'lead' | 'reviewer' }
   | { kind: 'lead' }
   | { kind: 'delivery'; ticketId: number }
   | { kind: 'queue' }

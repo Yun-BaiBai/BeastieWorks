@@ -22,7 +22,6 @@ const api = {
   updateConfig: (patch: Partial<AppConfig>): Promise<AppConfig> => ipcRenderer.invoke('config:update', patch),
   /** Open an https page (a sign-in page, a link in a report) in the person's browser. */
   /** A4: open Windows' voice typing (Win+H) over the focused text box. */
-  dictate: (): Promise<{ ok: true } | { ok: false; error: string }> => ipcRenderer.invoke('app:dictate'),
   openExternal: (url: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('app:openExternal', url),
   v8: {
     board: (): Promise<import('../shared/v8/board').BoardData> => ipcRenderer.invoke('v8:board'),
@@ -82,6 +81,14 @@ const api = {
     agentSignInStatus: (id: string, flowId: string): Promise<import('../shared/v8/agents').SignInFlow | null> => ipcRenderer.invoke('v8:agentSignInStatus', id, flowId),
     agentSignInCancel: (id: string): Promise<void> => ipcRenderer.invoke('v8:agentSignInCancel', id),
     agentChatClose: (id: string): Promise<void> => ipcRenderer.invoke('v8:agentChatClose', id),
+    /** 语音输入 (requirement 67): whether the speech model is here, downloading it, and speech to text. */
+    speechStatus: (): Promise<{ ready: boolean; size: number; downloading: { got: number } | null }> => ipcRenderer.invoke('v8:speechStatus'),
+    speechDownload: (onProgress: (got: number) => void): Promise<{ ready: boolean; size: number }> => {
+      const listen = (_e: unknown, got: number) => onProgress(got);
+      ipcRenderer.on('v8:speechProgress', listen);
+      return ipcRenderer.invoke('v8:speechDownload').finally(() => ipcRenderer.off('v8:speechProgress', listen));
+    },
+    speechTranscribe: (pcm: Float32Array): Promise<string> => ipcRenderer.invoke('v8:speechTranscribe', pcm),
     onChanged: (callback: () => void): (() => void) => { const handler = () => callback(); ipcRenderer.on('v8:changed', handler); return () => ipcRenderer.removeListener('v8:changed', handler); },
   },
 };

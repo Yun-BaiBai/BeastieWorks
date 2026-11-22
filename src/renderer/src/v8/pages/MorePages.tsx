@@ -5,7 +5,7 @@ import './morepages.css';
 import type { ArchiveItem, BoardData, LedgerDetail, TimelineItem } from '@shared/v8/board';
 import { TICKET_STATE_LABEL } from '@shared/v8/tickets';
 import { moneyText } from '@shared/v8/board';
-import { art, CREW, slotCast } from '../gremlins';
+import { art, CREW, deskCast } from '../gremlins';
 import { ProviderMark } from '../AgentBadge';
 import type { Hero } from './Pages';
 
@@ -129,7 +129,7 @@ export function TimelinePage({ title, items, hero }: { title: string; items: Tim
 /** Every character on a lanyard badge: who they are, where they sit, what they are on, which model drives them. */
 export function CrewPage({ data, hero }: { data: BoardData; hero: Hero }) {
   const seated = new Map<string, { label: string; ticket: string | null; model: string | null }>();
-  data.slots.forEach(s => seated.set(slotCast(s.order), { label: s.slot.label, ticket: s.ticket?.title ?? null, model: s.slot.model }));
+  data.slots.forEach(s => seated.set(deskCast(s), { label: s.slot.label, ticket: s.ticket?.title ?? null, model: s.slot.model }));
   return <section className="v8p v8m-crew" aria-label={tr('小怪名册')}>
     <div className="v8m-crewhead"><span className="v8-cap">{tr('小怪名册 · ')}{data.project}</span><h1>{tr('工坊里的每一只')}</h1>
       <p className="v8m-sub">{tr('外壳：')}{data.harness.label}{tr('。干活的小怪按工位轮流上岗，不会撞脸。')}</p></div>

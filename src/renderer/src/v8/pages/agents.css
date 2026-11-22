@@ -114,3 +114,33 @@
 .v8u-cap input { padding: 8px 12px; border-radius: 10px; border: 2px solid var(--edge); background: var(--paper); color: var(--ink); font: 600 14px var(--text); width: 100%; box-sizing: border-box; }
 .v8u-cap small { font: 500 11.5px/1.4 var(--text); color: var(--ink2); min-height: 16px; }
 .v8u-role > .v8a-radio { align-self: center; }
+
+/* 工位设置 (requirement 61): the desks on the left, the chosen desk's settings on the right. */
+.v8d-body { position: absolute; left: 80px; right: 80px; top: 232px; bottom: 32px; display: grid; grid-template-columns: 250px 1fr; gap: 20px; }
+.v8d-list { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; padding: 2px 6px 6px 2px; }
+.v8d-desk { display: flex; gap: 10px; align-items: center; text-align: left; padding: 8px 10px; border-radius: 12px; border: 2px solid var(--edge); background: var(--paper); color: var(--ink); box-shadow: 3px 3px 0 var(--shadow); cursor: pointer; }
+.v8d-desk.is-on { background: var(--amber); }
+:root[data-cth-theme=dark] .v8 .v8d-desk.is-on { color: #15120f; }
+.v8d-desk img { height: 40px; width: 40px; object-fit: contain; flex: none; }
+.v8d-desk span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.v8d-desk b { font: 900 14px var(--text); }
+.v8d-desk small { font: 500 11.5px/1.35 var(--text); opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v8d-desk .v8d-busy { font-weight: 800; }
+.v8d-form { overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 8px; min-width: 0; }
+.v8d-looks { display: flex; gap: 8px; flex-wrap: wrap; grid-column: 3 / -1; align-self: center; }
+.v8d-look { width: 54px; height: 54px; border-radius: 12px; border: 2px dashed var(--ink3); background: transparent; padding: 4px; cursor: pointer; }
+.v8d-look.is-on { border: 2.5px solid var(--edge); background: var(--amber); }
+.v8d-look img { width: 100%; height: 100%; object-fit: contain; }
+.v8d-skills .v8d-skilllist { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px 18px; align-self: center; }
+.v8d-skilllist .v8a-radio { white-space: nowrap; }
+.v8u-role .v8d-plan { grid-column: 2 / -1; margin-top: 0; box-shadow: none; border-width: 1.5px; }
+.v8d-backups { display: flex; flex-direction: column; gap: 6px; padding-left: 22px; }
+.v8d-backups ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.v8d-backups li { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.v8d-backups select { max-width: 260px; }
+.v8d-no { font: 900 13px var(--mono); width: 18px; text-align: right; color: var(--ink2); }
+.v8d-open { margin: 4px 0 8px; }
+.v8u-role > .v8d-looks { flex-direction: row; }
+.v8d-backups li { display: grid; grid-template-columns: 18px minmax(0, 1fr) 130px auto auto; gap: 8px; align-items: center; }
+.v8d-backups select { max-width: none; width: 100%; padding: 6px 8px; border-radius: 9px; border: 2px solid var(--edge); background: var(--paper); color: var(--ink); font: 600 13px var(--text); }
+.v8d-backups > .v8-quiet-btn { align-self: flex-start; }

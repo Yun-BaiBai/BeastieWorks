@@ -144,3 +144,4 @@
 /* 圆桌会议 (A6) on the lead's page */
 .v8p-turn p.v8p-plan { font-size: 16px; white-space: pre-wrap; }
 .v8p-plan em { margin-left: 8px; font: 600 13px/1 var(--text); font-style: normal; color: var(--ink3); }
+.v8p-wall.is-all { overflow-y: auto; }

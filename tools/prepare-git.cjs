@@ -26,8 +26,10 @@ if (sum !== SHA256) {
 const dir = join(__dirname, '..', 'build', 'git');
 rmSync(dir, { recursive: true, force: true });
 mkdirSync(dir, { recursive: true });
-const sevenZip = require('7zip-bin').path7za;
-execFileSync(sevenZip, ['x', '-bd', '-y', zip, '-o' + dir], { stdio: 'ignore' });
+// Windows' own tar (bsdtar, System32) reads zip files; named by its full path so a GNU tar earlier on PATH (Git's, on
+// GitHub's runners) is not used. electron-builder 26 no longer brings 7zip-bin along.
+const tar = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+execFileSync(tar, ['-xf', zip, '-C', dir], { stdio: 'ignore' });
 if (!existsSync(join(dir, 'cmd', 'git.exe'))) {
   console.error('[prepare-git] cmd/git.exe missing after unpacking');
   process.exit(1);

@@ -66,7 +66,7 @@ export function SkillsPage({ hero }: { hero: Hero }) {
   const retell = (s: LibrarySkill) => {
     if (!agent) return;
     setRetelling(s.id); setProblem(null);
-    window.cth.v8.skillRetell(s.id, agent).then(setView, e => setProblem('没复述成：' + why(e))).finally(() => setRetelling(null));
+    window.cth.v8.skillRetell(s.id, agent).then(setView, e => setProblem(tr('没复述成：') + why(e))).finally(() => setRetelling(null));
   };
 
   return <section className="v8p v8a v8s" aria-label={tr('技能库')}>

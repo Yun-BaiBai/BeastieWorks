@@ -583,7 +583,14 @@ export class AcpShell implements AgentShell {
     const child = startChild({ ...this.options, env }, spec.cwd);
     const session = new AcpSession(this.options, child, spec);
     try {
-      await session.start(spec, lib);
+      // The whole opening has a deadline, not only the handshake: an agent that answers "hello" and then never opens
+      // the session would otherwise hold up the lead's start or the review queue for good (1.0 review, finding 11).
+      const limit = Math.max(this.options.readyTimeoutMs ?? 30_000, 30_000) + 90_000;
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([
+        session.start(spec, lib),
+        new Promise<never>((_, no) => { timer = setTimeout(() => no(new Error(`${this.options.label} did not open a session within ${Math.round(limit / 1000)} s`)), limit); }),
+      ]).finally(() => clearTimeout(timer));
     } catch (err) {
       if (child.pid) hardKillTree(child.pid); else try { child.kill(); } catch { /* gone */ }
       throw err;

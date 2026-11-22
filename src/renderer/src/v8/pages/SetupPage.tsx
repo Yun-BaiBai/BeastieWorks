@@ -11,7 +11,7 @@ const why = (e: unknown) => e instanceof Error ? e.message.replace(/^Error invok
 type RoleKey = 'lead' | 'worker' | 'reviewer';
 const ROLE: Record<RoleKey, { title: string; hint: string }> = {
   lead: { title: tr('主理 bot'), hint: tr('跟你说话、派活。它不动手干活，用便宜的模型就够。') },
-  worker: { title: tr('干活的小怪'), hint: tr('每件活开一只，真正改文件、跑命令。用你平时干活最顺手的那个。') },
+  worker: { title: tr('干活的小怪'), hint: tr('新加的工位默认用这个。每个工位都能在调度台上点开，单独换 agent、技能和额度规矩。') },
   reviewer: { title: tr('审查'), hint: tr('每件活做完审一次。最好换一家公司的 agent 来审，看得出别家看不出的问题。') },
 };
 
@@ -87,7 +87,7 @@ export function SetupPage({ hero, first, onDone }: { hero: Hero; first: boolean;
       const c = await window.cth.getConfig();
       const acp = { lead: roles.lead, worker: roles.worker, ...(review && roles.reviewer ? { reviewer: roles.reviewer } : {}) };
       const was = (c.v8 ?? {}) as V8Settings;
-      const more = first ? {} : { slots, emergencySlot: emergency, maxCostUsd: capUsd, skillRoots: skillRoots ?? undefined };
+      const more = first ? {} : { ...(was.desks?.length ? {} : { slots }), emergencySlot: emergency, maxCostUsd: capUsd, skillRoots: skillRoots ?? undefined };
       await window.cth.updateConfig({ v8: { ...was, shell: 'acp', projectRoot: folder, leadName: name.trim() || tr('主理小怪'), review, acp, ...more } });
       onDone();
     } catch (e) { setProblem(tr('没存上：') + why(e)); } finally { setSaving(false); }
@@ -138,10 +138,12 @@ export function SetupPage({ hero, first, onDone }: { hero: Hero; first: boolean;
       {review && roles.reviewer && roles.worker && roles.reviewer.agent === roles.worker.agent && <p className="v8m-sub">{tr('审查和干活用的是同一家，最好换一家来审。')}</p>}
       {!first && <>
         <div className="v8u-role"><div><b>{tr('干活方式')}</b><small>{tr('改了不打断正在干的活。')}</small></div>
-          <label className="v8a-select"><span className="v8-cap">{tr('同时几只小怪干活')}</span>
+          {/* Once the desks are set up one by one (requirement 61), they are added and removed on the board. */}
+          {v8?.desks?.length ? <p className="v8m-sub v8u-desks">{tr('现在 {0} 个工位。加、删、改工位：在调度台上点开工位。', [v8.desks.length])}</p>
+            : <label className="v8a-select"><span className="v8-cap">{tr('同时几只小怪干活')}</span>
             <select value={slots} onChange={e => setSlots(Number(e.target.value))}>
               {[1, 2, 3, 4, 5, 6, 7, 8].map(n => <option key={n} value={n}>{n} {tr(' 只')}</option>)}
-            </select></label>
+            </select></label>}
           <label className="v8a-radio"><input type="checkbox" checked={emergency} onChange={e => setEmergency(e.target.checked)} />
             <span>{tr('另留一个应急名额：你刚说的话不用排队')}</span></label>
           {/* The cap, its box and what it means stay together in one column (boss's screenshot 2026-11-21). */}

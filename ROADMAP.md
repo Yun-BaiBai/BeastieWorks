@@ -4,6 +4,15 @@
 
 英文在后面。
 
+## 1.0
+
+- 每个工位单独设置：挑小怪、起名字，配 agent、模型、推理档位、能用的技能，额度到上限按自己的备用清单换或者等；最多 8 个工位
+- 跟主理小怪点名工位派活，工位忙就排队等它
+- 主理小怪和审查也能点开换 agent、设额度规矩
+- 主理小怪重启后接着之前的对话
+- 语音输入改成在本机离线识别（SenseVoice 模型，第一次用时下载），不联网、不花钱
+- 另一家公司的 agent 又把整个程序审了一遍，查出的问题都修了；Electron 升到 43
+
 ## 0.9（已发布）
 
 - 设置补齐：同时几只小怪、应急名额、花费上限、技能文件夹、白天/夜晚/跟系统
@@ -39,6 +48,15 @@
 ## English
 
 What Beastie Works plans to do next. **No dates**: a release goes out once its items are done and tested. The order may change; ideas are welcome as issues.
+
+### 1.0
+
+- Each desk set up on its own: its gremlin and name, agent, model, reasoning level, skills, and what to do when quota runs out (a list of backups, or wait); up to 8 desks
+- Name a desk when giving the Lead Gremlin a job; a busy desk gets it queued
+- Change the Lead Gremlin's and review's agent and quota rule from their pages
+- The Lead Gremlin carries on its conversation after a restart
+- Voice input recognised on this computer (the SenseVoice model, downloaded on first use): offline and free
+- Another company's agent reviewed the whole program again and every finding was fixed; Electron 43
 
 ### 0.9 (released)
 

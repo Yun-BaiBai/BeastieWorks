@@ -3,7 +3,6 @@ import './agents.css';
 import { useEffect, useRef, useState } from 'react';
 import type { AgentQuota, ChatTurn, ChoiceList, RosterRow, RosterView, SessionChoices, SignInFlow } from '@shared/v8/agents';
 import { QuotaLine } from '../QuotaLine';
-import { QuotaRuleBox } from '../QuotaRuleBox';
 import { InstallBox } from '../InstallBox';
 import { art } from '../gremlins';
 import type { Hero } from './Pages';
@@ -97,7 +96,8 @@ export function AgentsPage({ hero }: { hero: Hero }) {
       {view && !shown.length && <p className="v8m-sub">{tr('这台电脑上还没有装好的 agent。')}</p>}
       {view && <button type="button" className="v8-quiet-btn v8a-more" onClick={() => setAll(a => !a)}>{all ? tr('只看装好的') : tr('看全部 {0} 个（含没装的）', [rows.length])}</button>}
       {failed && <button type="button" className="v8-back" onClick={load}>{tr('再读一次')}</button>}
-      {view && <QuotaRuleBox />}
+      {view && <div className="v8a-rule"><span className="v8-cap">{tr('额度到上限时')}</span>
+        <p className="v8m-sub">{tr('等还是换、换哪个模型，现在每个工位单独设：在调度台上点开工位。主理小怪和审查，点开它们自己设。')}</p></div>}
       {view && here.length > 0 && <button type="button" className="v8-quiet-btn v8a-more" onClick={() => { setQuotas({}); readQuotas(rows, true); }}>{tr('重新读额度')}</button>}
     </div>
 

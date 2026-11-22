@@ -19,7 +19,7 @@ import { routingNoteWords, validateReport, validateReview } from './reports';
 interface TicketRow {
   id: number; source_message_id: number; title: string; original_request: string; routing_note: string;
   session_ref: string | null; workdir: string | null; created_at: number; ended_at: number | null; end_kind: 'done' | 'stopped' | null;
-  queue_rank: number;
+  queue_rank: number; target_slot: string | null;
 }
 /**
  * How urgent a pending assignment is. Both levels go before ordinary work; only BOSS may use the emergency slot
@@ -96,7 +96,7 @@ export class Scheduler {
    * Opens a ticket from one of the boss's own messages. The original request is copied from that message, never
    * written by the lead, so the gremlin always sees the boss's exact words. One message opens at most one ticket.
    */
-  openTicket(input: { fromMessageId: number; routingNote: string; title?: string }): number {
+  openTicket(input: { fromMessageId: number; routingNote: string; title?: string; slotId?: string | null }): number {
     return this.tx(() => {
       const source = this.message(input.fromMessageId);
       if (source.author !== 'boss' || source.kind !== 'say' || source.ticket_id !== null) throw new Error('V8_NEEDS_BOSS_MESSAGE');
@@ -104,9 +104,12 @@ export class Scheduler {
       const note = (input.routingNote ?? '').trim();
       if (note.length > 300 || routingNoteWords(note) > 30) throw new Error('V8_ROUTING_NOTE_TOO_LONG');
       const title = (input.title?.trim() || source.body.trim().replace(/\s+/g, ' ')).slice(0, TITLE_MAX);
+      // A named desk must be one of the ordinary desks (the emergency one only takes what the boss just spoke to).
+      const target = input.slotId ?? null;
+      if (target !== null && !this.slots().some(s => s.id === target && !s.emergency)) throw new Error('V8_NO_SUCH_DESK');
       const now = this.now();
-      const id = Number(this.db.prepare(`INSERT INTO v8_tickets(source_message_id,title,original_request,routing_note,created_at)
-        VALUES(?,?,?,?,?)`).run(source.id, title, source.body, note, now).lastInsertRowid);
+      const id = Number(this.db.prepare(`INSERT INTO v8_tickets(source_message_id,title,original_request,routing_note,created_at,target_slot)
+        VALUES(?,?,?,?,?,?)`).run(source.id, title, source.body, note, now, target).lastInsertRowid);
       this.newAssignment(id, { urgent: URGENT_NONE, recovery: false });
       return id;
     });
@@ -178,6 +181,9 @@ export class Scheduler {
       const busy = this.db.prepare("SELECT DISTINCT slot_id FROM v8_assignments WHERE status='RUNNING'").pluck().all() as string[];
       if (busy.some(id => !ids.has(id))) throw new Error('V8_SLOT_BUSY');
       this.db.prepare('DELETE FROM v8_slots').run();
+      // A desk that goes away frees the tickets that named it.
+      const normalIds = slots.filter(s => !s.emergency).map(s => s.id);
+      this.db.prepare(`UPDATE v8_tickets SET target_slot=NULL WHERE target_slot IS NOT NULL AND target_slot NOT IN (${normalIds.map(() => '?').join(',')})`).run(...normalIds);
       const ins = this.db.prepare('INSERT INTO v8_slots(id,label,model,emergency,position) VALUES(?,?,?,?,?)');
       slots.forEach((s, i) => ins.run(s.id, s.label.trim(), s.model ?? null, s.emergency ? 1 : 0, i));
     });
@@ -198,6 +204,11 @@ export class Scheduler {
     });
   }
 
+  /** The desk the ticket's latest assignment ran on (or runs on), once it has started somewhere. */
+  lastSlot(ticketId: number): string | null {
+    return (this.db.prepare('SELECT slot_id FROM v8_assignments WHERE ticket_id=? AND slot_id IS NOT NULL ORDER BY id DESC LIMIT 1').pluck().get(ticketId) as string | undefined) ?? null;
+  }
+
   slots(): SlotConfig[] {
     return (this.db.prepare('SELECT * FROM v8_slots ORDER BY position').all() as SlotRow[])
       .map(r => ({ id: r.id, label: r.label, model: r.model, emergency: !!r.emergency }));
@@ -216,11 +227,17 @@ export class Scheduler {
       const launches: Launch[] = [];
       const now = this.now();
       for (const a of pending) {
-        const normal = free.findIndex(s => !s.emergency);
-        const i = normal >= 0 ? normal : a.urgent >= URGENT_BOSS ? free.findIndex(s => s.emergency) : -1;
+        // A ticket that named its desk waits for that desk (requirement 62: named means that one, as in Orca).
+        const target = this.ticketRow(a.ticket_id).target_slot;
+        const normal = target ? free.findIndex(s => s.id === target) : free.findIndex(s => !s.emergency);
+        const i = normal >= 0 ? normal : !target && a.urgent >= URGENT_BOSS ? free.findIndex(s => s.emergency) : -1;
         if (i < 0) continue;
         const slot = free.splice(i, 1)[0];
         this.db.prepare("UPDATE v8_assignments SET status='RUNNING',slot_id=?,started_at=? WHERE id=?").run(slot.id, now, a.id);
+        // A ticket keeps the desk it first ran at: rework, answers and quota come back to the same gremlin, on the same
+        // agent and conversation (1.0 review, finding 5; Orca sends a follow-up to the same worker). Not the
+        // emergency desk, which only takes what the boss just spoke to.
+        if (!slot.emergency) this.db.prepare('UPDATE v8_tickets SET target_slot=? WHERE id=? AND target_slot IS NULL').run(slot.id, a.ticket_id);
         const t = this.ticketRow(a.ticket_id);
         launches.push({ assignmentId: a.id, ticketId: a.ticket_id, slotId: slot.id, sessionRef: t.session_ref, recovery: !!a.recovery });
       }
@@ -236,7 +253,9 @@ export class Scheduler {
       const a = this.assignment(assignmentId);
       if (a.status !== 'RUNNING') throw new Error('V8_ASSIGNMENT_NOT_RUNNING');
       if (typeof sessionRef !== 'string' || !sessionRef.trim() || sessionRef.length > 500) throw new Error('V8_SESSION_REF_INVALID');
-      this.db.prepare('UPDATE v8_tickets SET session_ref=COALESCE(session_ref,?) WHERE id=?').run(sessionRef, a.ticket_id);
+      // The session that actually runs is the one to carry on next time: a new one replaces an old one the agent
+      // could not load (1.0 review, finding 5).
+      this.db.prepare('UPDATE v8_tickets SET session_ref=? WHERE id=?').run(sessionRef, a.ticket_id);
     });
   }
 
@@ -466,7 +485,7 @@ export class Scheduler {
       return {
         id: t.id, title: t.title, originalRequest: t.original_request, routingNote: t.routing_note, state: this.state(t.id),
         createdAt: t.created_at, endedAt: t.ended_at, slotId: running ?? null, queuePosition: position >= 0 ? position + 1 : null,
-        quotaWait: this.openWait(t.id),
+        quotaWait: this.openWait(t.id), targetSlot: t.target_slot ?? null,
       };
     });
   }

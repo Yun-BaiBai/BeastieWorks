@@ -15,7 +15,9 @@ import type { ApprovalRequest } from './dispatcher';
  */
 
 const SAFE_COMMAND = /^\s*(?:(?:python3?|py)(?:\.exe)?\s|pytest\b|node(?:\.exe)?\s|npm\s+(?:test|t|run\s+(?:test|build|lint|typecheck|check))\b|npx\s+(?:tsc|vitest|jest|eslint|prettier\s+--check)\b|pnpm\s+(?:test|run\s+(?:test|build|lint|check))\b|git\s+(?:status|diff|log|show|add|commit|restore|checkout\s+--)\b|ls\b|dir\b|cat\b|type\b|echo\b|grep\b|rg\b|head\b|tail\b|wc\b|printf\b|find\b|sed\b|sort\b|uniq\b|cut\b|tr\b|pwd\b|where\b|which\b|basename\b|dirname\b|diff\b|true\b|ffprobe(?:\.exe)?\s|mediainfo(?:\.exe)?\s)/i;
-const FORBIDDEN = /(?:^|[\s;&|`(])(?:node|python3?|py)(?:\.exe)?\s+(?:[^|;&]*\s)?(?:-e|--eval|-p|--print|-c|-r|--require|--import|--input-type)(?=[\s=]|$)|(?:^|[\s;&|`(])(?:rm|rmdir|del|erase|rd|format|mklink|curl|wget|iwr|irm|Invoke-WebRequest|Invoke-RestMethod|ssh|scp|sudo|runas|powershell|pwsh|cmd)(?:\.exe)?(?=$|[\s;&|)])|git\s+(?:push|remote|fetch|pull|clone|reset\s+--hard|clean|config)|(?:npm|pnpm|yarn|pip|pip3|uv|cargo|go)\s+(?:install|i|add|get)\b|find\b[^|;&]*\s-(?:delete|exec|execdir|ok|okdir|fprint\w*)\b|sed\b[^|;&]*\s-i\b|https?:\/\/|>\s*\/dev\/|\$\(|`/i;
+const FORBIDDEN = /(?:^|[\s;&|`(])(?:node|python3?|py)(?:\.exe)?\s+(?:[^|;&]*\s)?(?:-e|--eval|-p|--print|-c|-r|--require|--import|--input-type)(?=[\s=]|$)|(?:^|[\s;&|`(])(?:rm|rmdir|del|erase|rd|format|mklink|curl|wget|iwr|irm|Invoke-WebRequest|Invoke-RestMethod|ssh|scp|sudo|runas|powershell|pwsh|cmd)(?:\.exe)?(?=$|[\s;&|)])|git\s+(?:push|remote|fetch|pull|clone|reset\s+--hard|clean|config)|(?:npm|pnpm|yarn|pip|pip3|uv|cargo|go)\s+(?:install|i|add|get)\b|find\b[^|;&]*\s-(?:delete|exec|execdir|ok|okdir|fprint\w*)\b|sed\b[^|;&]*\s-i\b|https?:\/\/|>\s*\/dev\/|\$\(|`|%[A-Za-z_][\w()]*%|\$env:|\$\{|\$[A-Za-z_]\w*|--output\b/i;
+// The last ones (1.0 review, finding 1): a path written through an environment variable (%TEMP%, $env:TEMP, ${HOME},
+// $HOME) cannot be checked, so it is refused; and git writing to a file of its choosing (--output).
 
 /** Every value of a "Key: value" line of a request's detail (a request may name several files). */
 function fieldsOf(detail: string, ...names: string[]): string[] {
@@ -86,7 +88,8 @@ export function directoryPolicy(o: DirectoryPolicyOptions): (r: ApprovalRequest)
         // A tool named by its full path (e.g. the project's own Python) counts as that tool if it lives in a tool dir.
         const named = (p: string) => p.replace(/^"?([A-Za-z]:[\\/][^"\s]+|\/[^"\s]+)"?(?=\s|$)/, (m, exe: string) =>
           (o.toolDirs ?? []).some(t => inside(t, exe)) ? exe.split(/[\\/]/).pop()! : m);
-        const parts = command.split(/&&|\|\||;|\||\r?\n/).map(p => named(p.trim())).filter(Boolean);
+        // A single & chains commands in cmd too (1.0 review, finding 1): split on it as on the others.
+        const parts = command.split(/&&|\|\||;|\||&|\r?\n/).map(p => named(p.trim())).filter(Boolean);
         if (!parts.length || !parts.every(p => SAFE_COMMAND.test(p))) return false;
         return pathsIn(command).every(p => inside(dir, p) || (o.toolDirs ?? []).some(t => inside(t, p)));
       }
@@ -116,7 +119,7 @@ export function readOnlyPolicy(dir: string): (tool: string, detail: string) => b
     const command = commandOf(detail);
     if (!command || command.length > 2000 || FORBIDDEN.test(command) || /[>]/.test(command)) return false;
     if (!fieldsOf(detail, 'Cwd').every(c => inside(dir, c))) return false;
-    const parts = command.split(/&&|\|\||;|\||\r?\n/).map(p => p.trim()).filter(Boolean);
+    const parts = command.split(/&&|\|\||;|\||&|\r?\n/).map(p => p.trim()).filter(Boolean);
     if (!parts.length || !parts.every(p => READ_ONLY_COMMAND.test(p))) return false;
     return pathsIn(command).every(p => inside(dir, p));
   };

@@ -32,6 +32,7 @@ You talk only to the **Lead Gremlin**. It turns what you say into tickets and ha
 
 **Sharing out the work**
 - **One ticket per job**: each ticket is done start to finish by one gremlin in its own working copy, so several can work at once without getting in each other's way.
+- **Each desk set up on its own**: open a desk on the board to pick its gremlin and name, and the agent, model, reasoning level and skills it uses; up to 8 desks. Tell the Lead Gremlin "have desk 2 do it" or "give it to Blackie" and the job goes to that desk only, waiting if it is busy.
 - **Splitting large jobs**: a large job can first be split into independent pieces, which several gremlins do together once you agree. Small jobs are not split; one ticket is faster.
 - **Work chains**: a large job in stages (say editing → voice-over → effects). When one stage is accepted you click "next stage"; the hand-over is the finished files and your own words.
 - **Roundtable**: say "give me plans" and several agents each write one without seeing the others'. The Lead Gremlin sorts them into Plan A / Plan B, and the one you pick starts right away.
@@ -44,7 +45,8 @@ You talk only to the **Lead Gremlin**. It turns what you say into tickets and ha
 **Your own agents**
 - **As they are**: each agent keeps its usual plugins, skills and sign-in. The list comes from the official public registry, 48 agents at present; missing ones install with one click, and npm and git ship with the app.
 - **Sign in from the app**: Codex, Claude, Cursor, Kimi, Grok and Antigravity can be signed in from the agent list.
-- **Quota you can see**: usage is read per agent. When it runs out you can wait for the reset or switch models (same maker, or another maker's through the bundled [Magpie](https://github.com/yetone/magpie)), set in advance and done automatically.
+- **Quota you can see**: usage is read per agent. When it runs out you can wait for the reset or go through a list of backup models (up to 5; same maker, or another maker's through the bundled [Magpie](https://github.com/yetone/magpie)). Each desk, the Lead Gremlin and review have their own, set in advance and done automatically.
+- **Change the Lead Gremlin and review in place**: open their pages to switch agent, model and level.
 
 **More**
 - **Project notes**: after each accepted job the Lead Gremlin notes your preferences and decisions, each backed by your own words. Notes can be read, edited, deleted or turned off.
@@ -94,6 +96,8 @@ On small jobs Beastie Works is slower and costs more. The extra buys a review by
 - Quota: Claude and Codex are read directly, others through Magpie, and some cannot be read. For agents that don't report dollars, cost is estimated from official prices; subscribers are not actually charged that way.
 - Switching to another maker's model through Magpie uses the subscription accounts signed in on your computer. Some services' terms may not allow this; judge for yourself and use only accounts in your own name.
 - The instructions given to agents are written in Chinese; with the English interface, the gremlins talk to you in English.
+- **Isolation is not absolute**: gremlins may only change files and run tests in their own working copy, which rests on two layers: each agent's own sandbox (Codex, for one, can write only to its working folder and has no network) and Beastie Works' own approval rules. Windows has no system-level isolation here, so a project script a gremlin runs could in principle reach elsewhere; only give the gremlins projects you trust.
+- **Big files (20 MB and up) are not copied**: to save disk space, video, audio and other big files are shared with the project and read-only while a job is open; a gremlin that changes one saves a new file for you instead. While the job is open, you can't edit that file directly either.
 
 ## Privacy
 

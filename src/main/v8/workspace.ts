@@ -1,8 +1,8 @@
 import { tr } from '../../shared/i18n';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 /**
  * Leftovers of running tests, never the gremlin's work: kept out of every diff the reviewer or the boss sees.
@@ -10,7 +10,9 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
  * Only caches: build output (dist, build, out) and logs can be what a project delivers (a video rendered to out/),
  * so they follow the project's own .gitignore (C3 review, finding 14).
  */
-export const ARTIFACTS = ['__pycache__', '*.pyc', '*.pyo', '.pytest_cache', 'node_modules', '.cache', '.DS_Store'];
+/** Where catchUp puts the project's version of a file both sides changed, for the gremlin to merge (never accepted). */
+export const MERGE_DIR = '.beastie-merge';
+export const ARTIFACTS = ['__pycache__', '*.pyc', '*.pyo', '.pytest_cache', 'node_modules', '.cache', '.DS_Store', MERGE_DIR];
 const artifactSpecs = ARTIFACTS.map(a => ':(exclude,glob)**/' + a + (a.includes('*') ? '' : '/**'));
 const artifactFiles = ARTIFACTS.filter(a => a.includes('*') || a.startsWith('.DS')).map(a => ':(exclude,glob)**/' + a);
 
@@ -57,6 +59,31 @@ export class TicketWorkspaces {
   constructor(private readonly repoRoot: string, private readonly baseDir: string) {
     this.branchPrefix = 'gw/' + createHash('sha256').update(resolve(baseDir).toLowerCase()).digest('hex').slice(0, 8) + '/';
     this.mirror = join(dirname(resolve(baseDir)), 'snapshot.git');
+    this.recoverAccept();
+  }
+
+  /** Where an accept in progress writes down what it swaps, so a crash part way can be put right (1.0 review, 4). */
+  private get journal(): string { return join(dirname(resolve(this.baseDir)), 'accept-journal.json'); }
+
+  /**
+   * An accept that did not finish (the app was killed, the power went) left its journal: every project file it had
+   * moved aside goes back where it was, and the half-placed new versions go. The project is as before that accept.
+   * Returns the files put back.
+   */
+  recoverAccept(): string[] {
+    if (!existsSync(this.journal)) return [];
+    let entries: Array<{ target: string; old: string | null; fresh: string | null }> = [];
+    try { entries = JSON.parse(readFileSync(this.journal, 'utf8')) as typeof entries; } catch { /* unreadable: nothing to redo */ }
+    const back: string[] = [];
+    for (const e of entries) {
+      try {
+        if (e.old && existsSync(e.old)) { rmSync(e.target, { force: true, recursive: false }); renameSync(e.old, e.target); back.push(e.target); }
+        else if (!e.old && e.fresh && !existsSync(e.fresh) && existsSync(e.target)) rmSync(e.target, { force: true });
+        if (e.fresh && existsSync(e.fresh)) rmSync(e.fresh, { force: true });
+      } catch { /* keep going: the rest still goes back */ }
+    }
+    rmSync(this.journal, { force: true });
+    return back;
   }
 
   path(ticketId: number): string { return join(this.baseDir, 'ticket-' + ticketId); }
@@ -105,7 +132,8 @@ export class TicketWorkspaces {
 
   ensure(ticketId: number): string {
     const dir = this.path(ticketId);
-    if (existsSync(join(dir, '.git'))) return dir;
+    // A ticket opened again (rework, an answer, a retry) holds its big files again (1.0 review, finding 2).
+    if (existsSync(join(dir, '.git'))) { this.lock(ticketId); return dir; }
     if (!existsSync(this.repoRoot)) throw new Error('V8_PROJECT_MISSING');
     mkdirSync(this.baseDir, { recursive: true });
     const branch = this.branch(ticketId);
@@ -139,18 +167,61 @@ export class TicketWorkspaces {
 
   /** The linked big files of a ticket, read-only while it is open (the project's copy too: it is the same file). */
   lock(ticketId: number): void {
+    // Kept as a mark beside the ticket, so a file shared by several open tickets is known to be held (1.0 review, 2).
+    if (this.big(ticketId).some(b => b.linked)) { mkdirSync(this.baseDir, { recursive: true }); writeFileSync(this.lockFile(ticketId), ''); }
     for (const b of this.big(ticketId)) if (b.linked) { try { chmodSync(join(this.path(ticketId), b.path), 0o444); } catch { /* gone */ } }
   }
 
-  /** Writable again: the ticket is done or stopped. */
+  /** Writable again: the ticket is done or stopped. A file another open ticket also holds stays read-only. */
   release(ticketId: number): void {
-    for (const b of this.big(ticketId)) if (b.linked) { try { chmodSync(join(this.path(ticketId), b.path), 0o666); } catch { /* gone */ } }
+    rmSync(this.lockFile(ticketId), { force: true });
+    const held = new Set<string>();
+    for (const n of this.lockedTickets()) for (const b of this.big(n)) if (b.linked) held.add(b.path);
+    for (const b of this.big(ticketId)) if (b.linked && !held.has(b.path)) { try { chmodSync(join(this.path(ticketId), b.path), 0o666); } catch { /* gone */ } }
+  }
+
+  private lockFile(ticketId: number): string { return join(this.baseDir, 'ticket-' + ticketId + '.locked'); }
+
+  /** The tickets whose linked big files are held now. */
+  private lockedTickets(): number[] {
+    try { return readdirSync(this.baseDir).map(n => /^ticket-(\d+)\.locked$/.exec(n)?.[1]).filter((n): n is string => !!n).map(Number); } catch { return []; }
   }
 
   /**
    * Record the folder as it is now in the private store and return that commit. Uses its own index file, so the
    * project folder is only read. Build leftovers and the folder's own .gitignore rules are left out.
    */
+  /**
+   * After an accept refused for a conflict (1.0 review, finding 13): the ticket's copy catches up with the project as
+   * it is now. A file only the project changed takes the project's version; a file both changed keeps the gremlin's,
+   * with the project's version beside it under .beastie-merge/ (left out of every diff and accept) for the gremlin to
+   * merge. The starting point becomes the project now, so the next accept sees only the gremlin's own work.
+   */
+  catchUp(ticketId: number): { taken: string[]; both: string[] } {
+    const dir = this.path(ticketId), base = this.base(ticketId);
+    if (!base || !existsSync(dir)) throw new Error('V8_TICKET_NO_WORKSPACE');
+    const mine = new Set(this.changes(ticketId).map(c => c.path));
+    const now = this.snapshot();
+    const out = execFileSync('git', ['--git-dir', this.mirror, '-c', 'core.quotepath=false', 'diff', base, now, '--name-status', '--no-renames', '-z'],
+      { windowsHide: true, maxBuffer: 16 << 20 }).toString().split('\0').filter(Boolean);
+    const taken: string[] = [], both: string[] = [];
+    for (let i = 0; i + 1 < out.length; i += 2) {
+      const status = out[i]![0], p = out[i + 1]!;
+      const here = join(dir, p), there = join(this.repoRoot, p);
+      if (!inside(dir, here) || !inside(this.repoRoot, there)) continue;
+      if (!mine.has(p)) {
+        if (status === 'D') rmSync(here, { force: true });
+        else { mkdirSync(dirname(here), { recursive: true }); copyFileSync(there, here); }
+        taken.push(p);
+      } else {
+        both.push(p);
+        if (status !== 'D') { const beside = join(dir, MERGE_DIR, p); mkdirSync(dirname(beside), { recursive: true }); copyFileSync(there, beside); }
+      }
+    }
+    writeFileSync(this.baseFile(ticketId), now);
+    return { taken, both };
+  }
+
   private snapshot(): string {
     const env = { ...process.env, GIT_INDEX_FILE: join(this.mirror, 'snapshot-index') };
     const run = (args: string[], input?: string) => execFileSync('git', [...SNAPSHOT_AUTHOR, '--git-dir', this.mirror, '--work-tree', this.repoRoot, ...args],
@@ -248,22 +319,32 @@ export class TicketWorkspaces {
       for (const st of staged) if (st.fresh) rmSync(st.fresh, { force: true });
       throw err;
     }
+    // Written down before anything in the project moves, so recoverAccept can undo a swap cut short by a crash.
+    for (const st of staged) if (!st.keep && existsSync(st.target)) st.old = st.target + tag + '.old';
+    mkdirSync(dirname(this.journal), { recursive: true });
+    writeFileSync(this.journal, JSON.stringify(staged.filter(st => !st.keep).map(st => ({ target: st.target, old: st.old, fresh: st.fresh }))));
     const swapped: typeof staged = [];
     try {
       for (const st of staged) {
         if (st.keep) continue;
-        if (existsSync(st.target)) { st.old = st.target + tag + '.old'; renameSync(st.target, st.old); }
+        if (st.old) renameSync(st.target, st.old);
         swapped.push(st);
         if (st.fresh) renameSync(st.fresh, st.target);
       }
     } catch (err) {
+      // Put back what was swapped; a step that fails is said, never swallowed, and the journal stays so the next
+      // start tries again (1.0 review, finding 4).
+      const stuck: string[] = [];
       for (const st of swapped.reverse()) {
-        try { if (st.fresh && existsSync(st.target) && !existsSync(st.fresh)) rmSync(st.target, { force: true }); } catch { /* keep going */ }
-        try { if (st.old) renameSync(st.old, st.target); } catch { /* keep going */ }
+        try { if (st.fresh && existsSync(st.target) && !existsSync(st.fresh)) rmSync(st.target, { force: true }); } catch { stuck.push(st.path); }
+        try { if (st.old) renameSync(st.old, st.target); } catch { stuck.push(st.path); }
       }
-      for (const st of staged) if (st.fresh) rmSync(st.fresh, { force: true });
+      for (const st of staged) if (st.fresh) { try { rmSync(st.fresh, { force: true }); } catch { /* a leftover beside the file */ } }
+      if (stuck.length) throw new Error(tr('收下中途出错，有几个文件没能放回原样（{0}），下次打开程序会再放回一次。原因：', [stuck.join(tr('、'))]) + (err instanceof Error ? err.message : String(err)));
+      rmSync(this.journal, { force: true });
       throw err;
     }
+    rmSync(this.journal, { force: true });
     // Everything is in place; an old version that cannot be removed is only a leftover, not a failure.
     for (const st of staged) { if (st.old) { try { rmSync(st.old, { force: true }); } catch { /* left behind */ } } result.applied.push(st.path); }
     return result;
@@ -303,7 +384,18 @@ export class TicketWorkspaces {
 
 /** True when `target` is `root` or inside it, after resolving `..` and symlinks of the parts that exist. */
 export function inside(root: string, target: string): boolean {
-  const real = (p: string) => { try { return realpathSync(p); } catch { return resolve(p); } };
+  // A path that does not exist yet is judged by its nearest existing folder, links followed, so a new file under a
+  // linked folder cannot land outside (1.0 review, finding 1).
+  const real = (p: string) => {
+    let at = resolve(p), rest = '';
+    for (;;) {
+      try { return rest ? join(realpathSync(at), rest) : realpathSync(at); } catch { /* not there yet */ }
+      const up = dirname(at);
+      if (up === at) return resolve(p);
+      rest = rest ? join(basename(at), rest) : basename(at);
+      at = up;
+    }
+  };
   const r = relative(real(root), real(resolve(root, target)));
   return r === '' || (!isAbsolute(r) && r !== '..' && !r.startsWith('..' + sep));
 }

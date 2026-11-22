@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } f
 import { MicButton } from '../MicButton';
 import { WORK_STEPS, type BoardData, type DeliveryDetail, type ReviewDetail, type SlotDetail } from '@shared/v8/board';
 import type { TicketView } from '@shared/v8/tickets';
-import { art, poseFor, slotCast } from '../gremlins';
+import { art, deskCast, poseFor } from '../gremlins';
 import { ChainCard, SplitCard } from '../board/Board';
 import { AgentBadge } from '../AgentBadge';
 import { QuotaLine, resetText } from '../QuotaLine';
@@ -34,20 +34,20 @@ function Ask({ placeholder, action, onSend, extra }: { placeholder: string; acti
   const send = () => { const v = text.trim(); if (v) { onSend(v); setText(''); } };
   return <div className="v8p-ask">
     <input ref={field} value={text} onChange={e => setText(e.target.value)} onKeyDown={enter(send)} placeholder={placeholder} aria-label={placeholder} />
-    <MicButton input={field} />
+    <MicButton input={field} onText={t => setText(v => (v.trim() ? v.trimEnd() + ' ' : '') + t)} />
     <button type="button" className="v8-send" onClick={send}>{action}</button>{extra}
   </div>;
 }
 
 // ---------- 工位 ----------
 
-export function SlotPage({ d, now, hero, harness, onPoke, onStop, onWait, onModel, onEffort }: { d: SlotDetail; now: number; hero: Hero; harness: BoardData['harness']; onPoke(text: string): void; onStop(): void; onWait?(): void; onModel?(model: string): void; onEffort?(effort: string): void }) {
+export function SlotPage({ d, now, hero, harness, onPoke, onStop, onWait, onModel, onEffort, onDesk }: { d: SlotDetail; now: number; hero: Hero; harness: BoardData['harness']; onPoke(text: string): void; onStop(): void; onWait?(): void; onModel?(model: string): void; onEffort?(effort: string): void; onDesk?(): void }) {
   const { slot: s } = d;
   const t = s.ticket!;
   return <section className="v8p v8p-slot" aria-label={s.slot.label + ' · ' + t.title}>
     <div className="v8p-floor" />
     <div className="v8p-sign"><span className="v8-cap">{tr('正在')}</span><div className="v8p-biglive">{d.log[0] ? d.log[0].kind + ' ' + d.log[0].text : s.live}</div></div>
-    <img className="v8-g v8p-hero" style={hero} src={art(slotCast(s.order), poseFor(t.state, s.phase))} alt="" />
+    <img className="v8-g v8p-hero" style={hero} src={art(deskCast(s), poseFor(t.state, s.phase))} alt="" />
     <div className="v8p-bench"><span className="v8-cap">{tr('已经干了')}</span>
       <div className="v8p-clock">{s.startedAt ? clock(now - s.startedAt) : '--:--'}<small>{moneyText(s.costUsd, s.costSure)}</small></div>
       <div className="v8p-bar"><i style={{ width: `${(s.step + .5) / WORK_STEPS.length * 100}%` }} /></div>
@@ -61,6 +61,7 @@ export function SlotPage({ d, now, hero, harness, onPoke, onStop, onWait, onMode
         <div><span className="v8-cap">{tr('它在做什么')}</span>
           <div className="v8p-log">{d.log.map(l => <div key={l.id} className={l.kind === tr('你说') ? 'is-boss' : ''}><b>{l.kind}</b>{l.text}</div>)}</div></div>
         <div><span className="v8-cap">{tr('背后是谁')}</span>
+          {onDesk && <button type="button" className="v8-quiet-btn v8d-open" onClick={onDesk}>{tr('这个工位的设置')}</button>}
           <AgentBadge harness={harness} model={d.tuning?.model ?? s.slot.model} />
           {d.tuning?.agent && <Tuning agent={d.tuning.agent} model={d.tuning.model} effort={d.tuning.effort} working={t.state === 'WORKING'} onWait={onWait} onModel={onModel} onEffort={onEffort} />}
           <span className="v8-cap v8p-gap">{tr('动过的文件')}</span>
@@ -118,8 +119,8 @@ function Tuning({ agent, model, effort, working, onWait, onModel, onEffort }: { 
 
 // ---------- 总管 ----------
 
-export function LeadPage({ data, hero, onSay, onAnswer, onOpenDelivery, onRetry, onResume, onPick, onNotes, onNextStage, onSplit }: {
-  data: BoardData; hero: Hero; onSay(text: string): void; onAnswer(ticketId: number, optionId: string): void; onOpenDelivery(ticketId: number): void; onRetry?(ticketId: number): void; onResume?(ticketId: number): void;
+export function LeadPage({ data, hero, onSay, onAnswer, onOpenDelivery, onRetry, onResume, onPick, onNotes, onNextStage, onSplit, onSettings }: {
+  data: BoardData; hero: Hero; onSettings?(): void; onSay(text: string): void; onAnswer(ticketId: number, optionId: string): void; onOpenDelivery(ticketId: number): void; onRetry?(ticketId: number): void; onResume?(ticketId: number): void;
   /** 圆桌会议 (A6): the boss picks Plan A or B. */
   onPick?(roundtableId: number, which: 'A' | 'B'): void;
   /** A10: the project's notebook. */
@@ -136,7 +137,8 @@ export function LeadPage({ data, hero, onSay, onAnswer, onOpenDelivery, onRetry,
   return <section className="v8p v8p-lead" aria-label={leadName()}>
     <div className="v8p-sun" />
     <img className="v8-g v8p-hero" style={hero} src={art('boss', results.length ? 'thumbs_up' : stuck.length ? 'shrugging' : questions.length ? 'pointing' : 'listening')} alt={leadName()} />
-    <div className="v8p-whocard"><span className="v8-cap">{tr('背后是谁')}</span><AgentBadge harness={data.harness} model={data.agents.lead} /></div>
+    <div className="v8p-whocard"><span className="v8-cap">{tr('背后是谁')}</span><AgentBadge harness={data.harness} model={data.agents.lead} />
+      {onSettings && <button type="button" className="v8-quiet-btn v8d-open" onClick={onSettings}>{tr('换 agent、模型和额度规矩')}</button>}</div>
     <div className="v8p-talkcol">
       <span className="v8-cap">{data.project} · {new Date(data.now).toLocaleDateString(dateLocale(), { weekday: 'short' })} {hhmm(data.now)}
         {onNotes && <button type="button" className="v8-quiet-btn v8n-open" onClick={onNotes}>{tr('项目笔记 →')}</button>}</span>
@@ -181,7 +183,8 @@ export function DeliveryPage({ d, hero, onAccept, onReject, onReviewAgain }: { d
       <img className="v8-g v8p-hero" style={hero} src={art('alien', 'reporting')} alt="" />
       {d.reviewPassed && <div className="v8p-stamp"><img className="v8-g" src={art('lanky', 'approve')} alt="" />{tr('审查通过')}</div>}
       {!d.reviewPassed && d.reviewNote && <img className="v8-g v8p-stampg" src={art('lanky', 'unimpressed')} alt="" />}
-      {!d.reviewPassed && d.reviewNote && <p className="v8p-reviewnote" role="note">{d.reviewNote}</p>}
+      {/* Shown with a pass too: a same-company review is no second opinion (1.0 review, finding 12). */}
+      {d.reviewNote && <p className="v8p-reviewnote" role="note">{d.reviewNote}</p>}
       {!d.reviewPassed && d.reviewNote?.startsWith(tr('审查没给结论')) && onReviewAgain && <button type="button" className="v8-back" onClick={onReviewAgain}>{tr('重新审一次')}</button>}
       <span className="v8-cap">{tr('你的原话')}</span>
       <blockquote className="is-small">{d.originalRequest}</blockquote>
@@ -208,7 +211,10 @@ export function DeliveryPage({ d, hero, onAccept, onReject, onReviewAgain }: { d
 // ---------- 排队 ----------
 
 const TURNS = [-1.2, 1.4, -.6, 1, -1.6, .8];
-export function QueuePage({ queue, hero, onFront, onDrop, onAdd }: { queue: TicketView[]; hero: Hero; onFront?(id: number): void; onDrop(id: number): void; onAdd(): void }) {
+export function QueuePage({ queue, hero, onFront, onDrop, onAdd, desks }: { queue: TicketView[]; hero: Hero; onFront?(id: number): void; onDrop(id: number): void; onAdd(): void; desks?: Record<string, string> }) {
+  // Every queued ticket stays reachable (1.0 review, finding 18); a named desk shows on its note.
+  const [all, setAll] = useState(false);
+  const shown = all ? queue : queue.slice(0, 5);
   return <section className="v8p v8p-queue" aria-label={tr('排队')}>
     <div className="v8p-qleft">
       <span className="v8-cap">{tr('排队')}</span>
@@ -216,11 +222,12 @@ export function QueuePage({ queue, hero, onFront, onDrop, onAdd }: { queue: Tick
       <p>{tr('按便签的顺序做。想先做哪张，把它提到最前面，或者直接告诉')}{leadName()}{tr('。')}</p>
       <img className="v8-g v8p-hero" style={hero} src={art('tri', 'long_wait')} alt="" />
     </div>
-    <div className="v8p-wall">
-      {queue.slice(0, 5).map((t, i) => <article key={t.id} className="v8p-bignote" style={{ transform: `rotate(${TURNS[i]}deg)` }}><i className="v8p-pin" />
-        <small>{String(i + 1).padStart(2, '0')}{i === 0 ? tr(' · 下一张') : ''}</small><h3>{t.title}</h3><q>{t.originalRequest}</q>
+    <div className={'v8p-wall' + (all ? ' is-all' : '')}>
+      {shown.map((t, i) => <article key={t.id} className="v8p-bignote" style={{ transform: `rotate(${TURNS[i % TURNS.length]}deg)` }}><i className="v8p-pin" />
+        <small>{String(i + 1).padStart(2, '0')}{i === 0 ? tr(' · 下一张') : ''}{t.targetSlot && desks?.[t.targetSlot] ? tr(' · 等{0}', [desks[t.targetSlot]]) : ''}</small><h3>{t.title}</h3><q>{t.originalRequest}</q>
         <div className="v8p-nacts">{i > 0 && onFront && <button type="button" onClick={() => onFront(t.id)}>{tr('提到最前')}</button>}<button type="button" onClick={() => onDrop(t.id)}>{tr('撤掉')}</button><time>{hhmm(t.createdAt)} {tr(' 加的')}</time></div>
       </article>)}
+      {queue.length > 5 && !all && <button type="button" className="v8p-bignote is-add" onClick={() => setAll(true)}><span>{tr('还有 {0} 张', [queue.length - 5])}</span><em>{tr('全部摊开')}</em></button>}
       <button type="button" className="v8p-bignote is-add" onClick={onAdd}><span>{tr('＋ 再加一张')}</span><em>{tr('在')}{leadName()}{tr('那里跟它说就行')}</em></button>
     </div>
   </section>;
@@ -228,14 +235,15 @@ export function QueuePage({ queue, hero, onFront, onDrop, onAdd }: { queue: Tick
 
 // ---------- 审查 ----------
 
-export function ReviewPage({ d, enabled, hero, harness, model }: { d: ReviewDetail; enabled: boolean; hero: Hero; harness: BoardData['harness']; model: string | null }) {
+export function ReviewPage({ d, enabled, hero, harness, model, onSettings }: { d: ReviewDetail; enabled: boolean; hero: Hero; harness: BoardData['harness']; model: string | null; onSettings?(): void }) {
   return <section className="v8p v8p-review" aria-label={tr('审查')}>
     <div className="v8p-booth">
       <div className="v8p-post" /><div className="v8p-gate" />
       <img className="v8-g v8p-hero" style={hero} src={art('lanky', !enabled ? 'idle' : !d.latest ? 'checking' : d.latest.checks.every(c => c.ok) ? 'approve' : 'reject')} alt="" />
       <div className="v8p-rulecard"><span className="v8-cap">{tr('审查的规矩')}</span>
         <p>{tr('它看不到干活小怪的对话，只拿到三样东西：')}<b>{tr('你的原话、改动、验证结果')}</b>{tr('。过了它这关，才会来找你。')}</p>
-        <span className="v8-cap v8p-gap">{tr('背后是谁')}</span><AgentBadge harness={harness} model={model} /></div>
+        <span className="v8-cap v8p-gap">{tr('背后是谁')}</span><AgentBadge harness={harness} model={model} />
+        {onSettings && <button type="button" className="v8-quiet-btn v8d-open" onClick={onSettings}>{tr('换 agent、模型和额度规矩')}</button>}</div>
     </div>
     <div className="v8p-checks">
       {!enabled && <p className="v8p-summary">{tr('审查还没开工。现在做完的活会直接交给你看。')}</p>}

@@ -14,6 +14,8 @@ export interface BoardSlot {
   slot: SlotConfig;
   /** Display order among slots, 0-based; picks the gremlin (grunt, tri, grunt, …). */
   order: number;
+  /** The gremlin the boss picked for this desk (requirement 61). Unset: by order. */
+  look?: string;
   ticket: TicketView | null;
   /** What the gremlin is doing now, e.g. "edit src/export.ts · 第 42 行". */
   live: string | null;

@@ -195,7 +195,10 @@ export const QUIRKS: Record<string, AgentQuirk> = {
     installArgs: env => findCodex(env) ? ['--omit=optional'] : [],
     installNote: env => findCodex(env) ? null : tr('这台电脑上没有 Codex，会连 Codex 程序一起装，另外约 500 MB'),
     // Adapter 2.6.0 offers read-only | workspace-write | agent | agent-full-access.
-    modes: { lead: 'read-only', reviewer: 'read-only', worker: 'agent' },
+    // Workers in workspace-write: Codex's own sandbox (writes only in the ticket folder, no network), and anything it
+    // asks to do beyond that comes to the app's rule (approval.ts), not Codex's own auto reviewer as in 'agent'
+    // (1.0 review, finding 1; OpenMausBot and T3 Code turn the agent's own sandbox on the same way).
+    modes: { lead: 'read-only', reviewer: 'read-only', worker: 'workspace-write' },
     light: env => codexLight(env),
     prepare: (launch, env) => {
       const codex = findCodex(env);

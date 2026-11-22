@@ -93,4 +93,6 @@ export function createV8Schema(db: Database.Database): void {
   const supplyCols = db.prepare("SELECT name FROM pragma_table_info('v8_ticket_supply')").pluck().all() as string[];
   if (!supplyCols.includes('effort')) db.exec('ALTER TABLE v8_ticket_supply ADD COLUMN effort TEXT');
   if (!cols.includes('queue_rank')) db.exec('ALTER TABLE v8_tickets ADD COLUMN queue_rank INTEGER NOT NULL DEFAULT 0');
+  // 老板 2026-11-21 (requirement 62): the boss may name the desk; that ticket runs on it only, waiting if it is busy.
+  if (!cols.includes('target_slot')) db.exec('ALTER TABLE v8_tickets ADD COLUMN target_slot TEXT');
 }

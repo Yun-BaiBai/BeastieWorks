@@ -1,4 +1,5 @@
 import { tr } from '../../shared/i18n';
+import { rmTree } from './rmTree';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { run } from './acpRegistry';
@@ -31,10 +32,10 @@ export interface ToolDef {
 
 export const SHIPPED_TOOLS: ToolDef[] = [
   { skill: 'agent-browser', command: 'agent-browser', kind: 'npm', source: 'agent-browser',
-    note: '第一次用时它还要另下一个专用 Chrome（agent-browser install），小怪会先问你' },
+    get note() { return tr('第一次用时它还要另下一个专用 Chrome（agent-browser install），小怪会先问你'); } },
   { skill: 'agent-desktop', command: 'agent-desktop', kind: 'npm', source: 'agent-desktop' },
   { skill: 'agent-reach', command: 'agent-reach', kind: 'uv', source: 'https://github.com/Panniantong/Agent-Reach/releases/latest/download/agent-reach.zip',
-    note: '按 Agent Reach 自己的说明用 uv 装；装好后各平台怎么接，小怪用到时照技能说明做' },
+    get note() { return tr('按 Agent Reach 自己的说明用 uv 装；装好后各平台怎么接，小怪用到时照技能说明做'); } },
   { skill: 'find-skills', command: 'npx', kind: 'npx' },
 ];
 
@@ -184,7 +185,7 @@ export class SkillTools {
     const def = this.def(skill);
     if (def.kind !== 'npm' || !this.installedVersion(def)) throw new Error(tr('这个工具不是小怪工坊装的，不在这里卸。'));
     rmSync(this.launcherFile(def.command), { force: true });
-    rmSync(path.join(this.npmDir, 'node_modules', def.source!), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    rmTree(path.join(this.npmDir, 'node_modules', def.source!));
     return this.view();
   }
 }

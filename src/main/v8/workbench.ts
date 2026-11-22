@@ -7,7 +7,8 @@ import { sureOf } from '../../shared/v8/board';
 import type { CostBasis } from './shell';
 import type { BoardData, BoardSlot, DeliveryDetail, FeedLine, FileChange, RingMark, SlotDetail, TalkLine, WorkLogLine } from '../../shared/v8/board';
 import type { DoneReport, SlotConfig, TicketView, V8Message } from '../../shared/v8/tickets';
-import type { V8QuotaRule, V8Settings } from '../../shared/v8/settings';
+import type { V8Desk, V8QuotaRule, V8Settings } from '../../shared/v8/settings';
+import { MAX_BACKUPS, deskLabel, desksOf, nextBackup, planOf } from '../../shared/v8/desks';
 import { Scheduler } from './scheduler';
 import { Dispatcher, type Activity } from './dispatcher';
 import { Lead } from './lead';
@@ -23,6 +24,7 @@ import { SKILL_TOOLS, type SkillLibrary } from './skillLibrary';
 import type { AgentQuota } from '../../shared/v8/agents';
 import { AcpShell, type AcpShellOptions } from './acpShell';
 import { agentName } from './acpQuirks';
+import { makerOf } from './maker';
 import type { V8AcpRole } from '../../shared/v8/settings';
 import { Roundtable, type Proposer } from './roundtable';
 import { oneShot } from './oneShot';
@@ -54,6 +56,9 @@ export interface WorkbenchOptions {
   quotaOf?: (agent: string) => Promise<AgentQuota>;
   /** The boss's rule for running out of quota, read each time it happens (default: settings.onQuota). */
   quotaRule?: () => V8QuotaRule | undefined;
+  /** The lead's and the reviewer's own rules for running out of quota, read each time (requirement 66). Default: the
+   *  settings the workbench was opened with. */
+  rolePlan?: (role: 'lead' | 'reviewer') => import('../../shared/v8/settings').V8QuotaPlan | undefined;
   /** The app's skill library (第 6 步); gremlins get it only on agents that take the app's tools. */
   skills?: SkillLibrary;
   /** The three-state probe's limits and pace (v8 计划书 S2.2); tests shorten them. */
@@ -167,7 +172,9 @@ export class V8Workbench {
       approve: directoryPolicy({ workdir: id => this.spaces.path(id), protectedFiles: id => this.spaces.big(id).filter(b => b.linked).map(b => b.path), hostTools: [REPORT_TOOL.name, ...(o.skills ? SKILL_TOOLS.map(t => t.name) : [])] }),
       clock: this.now, ...(o.probe ? { probe: o.probe } : {}),
       notes: { briefLines: () => this.notes.briefLines() },
-      ...(o.skills ? { skills: { briefLines: (about: string) => o.skills!.briefLines(about), call: (n: string, a: unknown) => o.skills!.call(n, a), tools: SKILL_TOOLS } } : {}),
+      ...(o.skills ? { skills: { briefLines: (about: string, slotId?: string) => o.skills!.briefLines(about, this.ranAt(slotId)?.skillsOff ?? []), call: (n: string, a: unknown, slotId?: string) => o.skills!.call(n, a, this.ranAt(slotId)?.skillsOff ?? []), tools: SKILL_TOOLS } } : {}),
+      // Each desk's gremlin on the desk's own agent, model and effort (requirement 61), read when its ticket starts.
+      ...(acp ? { shellFor: (slotId: string) => { const d = this.desk(slotId); return d ? this.roleShell(d) : null; } } : {}),
     });
     this.thinker = acp ? thinker : null;
     this.patrolLimits = { ...PATROL_DEFAULTS, ...(o.patrol ?? {}) };
@@ -176,11 +183,27 @@ export class V8Workbench {
     const kept = this.db.prepare('SELECT agent, ref FROM v8_lead_session WHERE id = 1').get() as { agent: string; ref: string } | undefined;
     this.lead = new Lead(this.scheduler, this.dispatcher, thinker, { cwd: leadCwd, name: this.leadName(), model: acp ? acp.lead.model ?? null : model,
       sessionRef: kept && kept.agent === leadAgent ? kept.ref : null,
+      ...(acp ? { plan: () => this.rolePlan('lead') } : {}),
+      onNote: (text: string, tone: 'boss' | 'question') => { this.pushFeed(this.leadName(), text, tone); this.changed(); },
+      clock: this.now,
+      // The desks as the board shows them, so the boss can name one (requirement 62).
+      desks: () => {
+        const tickets = this.scheduler.tickets();
+        return this.scheduler.slots().filter(s => !s.emergency).map(s => {
+          const d = this.desk(s.id);
+          const on = tickets.find(t => t.slotId === s.id && t.state === 'WORKING');
+          const agent = d && this.o.settings.shell === 'acp' ? agentName(d.agent) : tr('演示小怪');
+          return { id: s.id, label: s.label, agent, model: s.model, busyWith: on ? `#${on.id} ${on.title}` : null,
+            waiting: tickets.filter(t => t.targetSlot === s.id && t.state === 'QUEUED').length };
+        });
+      },
       history: () => this.scheduler.messages(null, 30).map(m => ({ author: m.author === 'boss' ? 'boss' as const : 'lead' as const, text: String(m.body) })),
       onSession: ref => { this.db.prepare('INSERT INTO v8_lead_session(id, agent, ref) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET agent = excluded.agent, ref = excluded.ref').run(leadAgent, ref); },
       ...(acp ? { roundtable: { open: (m: number, t?: string) => this.roundtable!.open(m, t), plans: (a: unknown) => this.roundtable!.plans(a) } } : {}), chains: { open: (a: unknown) => this.chains.open(a) }, ...(acp ? { splits: { open: (m: number, t?: string) => this.splits!.open(m, t) } } : {}), onCost: (usd, basis) => { this.spentBases.add(basis); this.spent += usd; this.spentBy.lead += usd; this.changed(); } });
     this.reviewer = s.review === false ? null : new Reviewer(this.scheduler, this.dispatcher, reviewShell, {
       model: acp ? (acp.reviewer ?? acp.lead).model ?? null : model, cwd: id => this.spaces.path(id), diff: id => this.rawDiff(id), onCost: (usd, basis) => { this.spentBases.add(basis); this.spent += usd; this.spentBy.review += usd; this.changed(); },
+      ...(acp ? { plan: () => this.rolePlan('reviewer') } : {}),
+      onNote: (text, tone) => { this.pushFeed(tr('审查'), text, tone); this.changed(); },
     });
     this.roundtable = acp ? new Roundtable({
       db: this.db, scheduler: this.scheduler, projectRoot: this.projectRoot,
@@ -346,7 +369,7 @@ export class V8Workbench {
    * agent starts over (read from the maker, no quota used), or when the boss says go on.
    */
   async waitForQuota(ticketId: number): Promise<{ resetsAt: number | null }> {
-    const agent = this.workerAgent();
+    const agent = this.workerAgent(this.scheduler.lastSlot(ticketId));
     const q = agent && this.o.quotaOf ? await this.o.quotaOf(agent).catch(() => null) : null;
     const resetsAt = soonestBack(q);
     const when = resetsAt ? new Date(resetsAt).toLocaleString(dateLocale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + tr(' 额度重置后接着干') : tr('不知道额度几点重置，过一阵再试');
@@ -363,29 +386,35 @@ export class V8Workbench {
    * when the refusal did not say when the quota is back, ask the maker (no quota used). The board says which.
    */
   async applyQuotaRule(ticketId: number, resetsAt: number | null): Promise<void> {
-    const rule = this.o.quotaRule ? this.o.quotaRule() : this.o.settings.onQuota;
+    // The desk the ticket ran at decides (requirement 63); the emergency desk follows the old single rule.
+    const slotId = this.scheduler.lastSlot(ticketId);
+    const desk = this.ranAt(slotId);
+    const plan = desk ? desk.onQuota : planOf(this.o.quotaRule ? this.o.quotaRule() : this.o.settings.onQuota);
     const who = this.label(ticketId);
     const pin = this.scheduler.ticketSupply(ticketId);
-    const role = this.workerAgent() ? this.o.settings.acp?.worker : undefined;
+    const role = this.workerAgent(slotId) ? desk ?? this.o.settings.acp?.worker : undefined;
     const model = pin.model ?? role?.model ?? null, effort = pin.effort ?? role?.effort ?? null;
-    if (rule?.do === 'switch' && rule.model && (rule.model !== model || (rule.effort && rule.effort !== effort))) {
+    // The backups in order (OpenMausBot's FallbackChain): the one after the model it ran out on, or the first.
+    const backups = plan?.do === 'switch' ? (plan.backups ?? []).filter(b => b && b.model).slice(0, MAX_BACKUPS) : [];
+    const next = nextBackup(plan, model, effort);
+    if (next) {
       try {
-        this.scheduler.setTicketSupply(ticketId, { model: rule.model, ...(rule.effort ? { effort: rule.effort } : {}) });
+        this.scheduler.setTicketSupply(ticketId, { model: next.model, ...(next.effort ? { effort: next.effort } : {}) });
         this.scheduler.resumeFromQuota(ticketId, 'model');
-        this.pushFeed(who, tr('额度用完，按你定的规矩换成 {0}{1}接着干', [rule.model, rule.effort ? tr('（{0} 档）', [rule.effort]) : '']), 'boss');
+        this.pushFeed(who, tr('额度用完，按你定的规矩换成 {0}{1}接着干', [next.model, next.effort ? tr('（{0} 档）', [next.effort]) : '']), 'boss');
         await this.dispatcher.pump(); this.changed();
         return;
       } catch { /* moved on meanwhile: fall through to waiting */ }
     }
     let back = resetsAt;
     if (back === null) {
-      const agent = this.workerAgent();
+      const agent = this.workerAgent(slotId);
       back = soonestBack(agent && this.o.quotaOf ? await this.o.quotaOf(agent).catch(() => null) : null);
       if (back !== null && back > this.now()) this.scheduler.setQuotaReset(ticketId, back);
       else back = null;
     }
     const when = back ? new Date(back).toLocaleString(dateLocale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + tr(' 额度重置后自己接着干') : tr('不知道额度几点重置，过一阵再试');
-    const why = rule?.do === 'switch' && rule.model ? tr('已经在用备用的 {0}，也用完了，等额度', [rule.model]) : tr('按你定的规矩等额度');
+    const why = backups.length ? tr('备用的也用完了（最后在用 {0}），等额度', [model ?? '']) : tr('按你定的规矩等额度');
     this.pushFeed(who, tr('额度用完，{0}（{1}）', [why, when]), 'question');
     this.changed();
   }
@@ -394,7 +423,35 @@ export class V8Workbench {
   leadName(): string { return this.o.settings.leadName?.trim().slice(0, 20) || tr('主理小怪'); }
 
   /** The agent the gremlins run on, when they run on an ACP agent. */
-  workerAgent(): string | null { return this.o.settings.shell === 'acp' ? this.o.settings.acp?.worker.agent ?? null : null; }
+  workerAgent(slotId?: string | null): string | null {
+    if (this.o.settings.shell !== 'acp') return null;
+    return this.ranAt(slotId)?.agent ?? this.o.settings.acp?.worker.agent ?? null;
+  }
+
+  /** The lead's or the reviewer's rule for running out of quota (requirement 66): read live, as the desks' are. */
+  private rolePlan(role: 'lead' | 'reviewer'): import('../../shared/v8/settings').V8QuotaPlan | undefined {
+    if (this.o.rolePlan) return this.o.rolePlan(role);
+    const acp = this.o.settings.acp;
+    return role === 'lead' ? acp?.lead.onQuota : (acp?.reviewer ?? acp?.lead)?.onQuota;
+  }
+
+  /** Each desk as it was when its current (or last) work started (1.0 review, finding 7). */
+  private atLaunch = new Map<string, V8Desk | null>();
+
+  /** The desk a piece of work runs at, as it was when the work started; the desk now if nothing started there yet. */
+  private ranAt(slotId: string | null | undefined): V8Desk | null {
+    if (slotId && this.atLaunch.has(slotId)) return this.atLaunch.get(slotId) ?? null;
+    return this.desk(slotId);
+  }
+
+  /** A desk as the boss set it up (requirement 61), or null for the emergency desk and for none. */
+  desk(slotId: string | null | undefined): V8Desk | null {
+    if (!slotId) return null;
+    const d = desksOf(this.o.settings).find(x => x.id === slotId) ?? null;
+    // Before the boss set desks, the one old rule is read live, as it always was (changing it restarts nothing).
+    if (d && !this.o.settings.desks?.length && this.o.quotaRule) { const plan = planOf(this.o.quotaRule()); return plan ? { ...d, onQuota: plan } : { ...d, onQuota: undefined }; }
+    return d;
+  }
 
   private quotaTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -439,7 +496,7 @@ export class V8Workbench {
     // Not accepted, by a conflict or a failure: the ticket is still open, so its big files are read-only again.
     try { r = this.spaces.base(ticketId) ? this.spaces.apply(ticketId) : { applied: [], conflicts: [] }; } catch (err) { this.spaces.lock(ticketId); throw err; }
     if (r.conflicts.length) this.spaces.lock(ticketId);
-    if (r.conflicts.length) throw new Error('V8_APPLY_CONFLICT: ' + r.conflicts.join(tr('、')));
+    if (r.conflicts.length) { this.conflicted.add(ticketId); throw new Error('V8_APPLY_CONFLICT: ' + r.conflicts.join(tr('、'))); }
     this.scheduler.confirmTicket(ticketId); this.mark('passed'); this.changed();
     this.chains.accepted(ticketId, r.applied);
     this.inBackground(this.captureNotes(ticketId));
@@ -492,7 +549,20 @@ export class V8Workbench {
   noteAdd(text: string): NotesView { this.notes.add(text); this.changed(); return this.notesView(); }
   noteEdit(id: number, text: string): NotesView { this.notes.edit(id, text); this.changed(); return this.notesView(); }
   noteRemove(id: number): NotesView { this.notes.remove(id); this.changed(); return this.notesView(); }
-  async reject(ticketId: number, why: string): Promise<void> { await this.tell(ticketId, tr('打回重做：') + (why.trim() || tr('没写原因'))); this.mark('refused'); }
+  async reject(ticketId: number, why: string): Promise<void> {
+    // Sent back after an accept refused for a conflict: the gremlin first gets the project as it is now (1.0 review, 13).
+    let caught = '';
+    if (this.conflicted.delete(ticketId)) {
+      try {
+        const c = this.spaces.catchUp(ticketId);
+        caught = '\n\n' + tr('（程序已把你的工作副本换成项目现在的样子：你没动过的文件用了项目里的新版本。{0}）', [c.both.length ? tr('这几个文件你和项目都改过：{0}；项目里现在的版本放在 .beastie-merge/ 下面同样的位置，把两边合在一起再交，.beastie-merge 不用删，它不会放进项目', [c.both.join(tr('、'))]) : tr('没有两边都改过的文件')]);
+      } catch { /* the folder is gone: the gremlin starts from the project anyway */ }
+    }
+    await this.tell(ticketId, tr('打回重做：') + (why.trim() || tr('没写原因')) + caught); this.mark('refused');
+  }
+
+  /** Tickets whose last accept was refused for a conflict (reject then catches the copy up). */
+  private conflicted = new Set<number>();
   /** Try a stuck or failed ticket again. With another model (or later another agent) it starts a fresh session that
    *  picks up from the directory, since the old session cannot be read by it (S2.7). */
   /**
@@ -501,10 +571,10 @@ export class V8Workbench {
    * and then the old slots stay until that work is done.
    */
   private applySlots(s: V8Settings): void {
-    const count = Math.min(MAX_SLOTS, Math.max(1, Math.floor(s.slots ?? 2)));
-    // With agents from the roster each role names its own model; the slots show the gremlins'.
+    // The desks as the boss set them up, each with its own name and model (requirement 61); before he set any, the old
+    // count with the one worker role (desks.ts).
     const model = (s.shell === 'acp' ? s.acp?.worker.model : null) ?? null;
-    const slots: SlotConfig[] = Array.from({ length: count }, (_, i) => ({ id: 'slot-' + (i + 1), label: tr('工位 ') + String(i + 1).padStart(2, '0'), model, emergency: false }));
+    const slots: SlotConfig[] = desksOf(s).slice(0, MAX_SLOTS).map((d, i) => ({ id: d.id, label: deskLabel(d, i, n => tr('工位 ') + n), model: s.shell === 'acp' ? d.model ?? null : null, emergency: false }));
     if (s.emergencySlot !== false) slots.push({ id: 'slot-emergency', label: tr('应急'), model, emergency: true });
     if (JSON.stringify(this.scheduler.slots()) !== JSON.stringify(slots)) {
       try { this.scheduler.setSlots(slots); } catch (err) { if (!(err instanceof Error && err.message === 'V8_SLOT_BUSY')) throw err; }
@@ -540,7 +610,8 @@ export class V8Workbench {
       const ticket = tickets.find(t => t.slotId === slot.id && t.state === 'WORKING') ?? null;
       const l = ticket ? this.slotLive.get(slot.id) : undefined;
       const live = l && l.ticketId === ticket?.id ? l : undefined;
-      return { slot, order, ticket, live: live?.live ?? null, phase: ticket ? live?.phase ?? 'working' : null, step: live?.step ?? 0,
+      const look = this.desk(slot.id)?.look;
+      return { slot, order, ...(look ? { look } : {}), ticket, live: live?.live ?? null, phase: ticket ? live?.phase ?? 'working' : null, step: live?.step ?? 0,
         startedAt: live?.startedAt ?? null, costUsd: live?.cost ?? 0, costSure: sureOf(live?.bases ?? []), reporting: !!live && live.reportingUntil > now,
         recent: ticket ? (this.ticketLive.get(ticket.id)?.log ?? []).filter(l => l.kind !== '说').slice(1, 4).map(l => (l.kind + ' ' + l.text).trim()) : [] };
     };
@@ -588,10 +659,10 @@ export class V8Workbench {
     const t = this.ticketLive.get(slot.ticket.id);
     const q = [...this.scheduler.messages(slot.ticket.id)].reverse().find(m => m.kind === 'report' && typeof m.body === 'object' && m.body.kind === 'question');
     const pin = this.scheduler.ticketSupply(slot.ticket.id);
-    const role = this.o.settings.shell === 'acp' ? this.o.settings.acp?.worker : undefined;
+    const role = this.o.settings.shell === 'acp' ? this.ranAt(slotId) ?? this.o.settings.acp?.worker : undefined;
     return {
       slot, saidAt: slot.ticket.createdAt, log: t?.log ?? [], files: [...(t?.files.values() ?? [])],
-      tuning: { agent: this.workerAgent(), model: pin.model ?? slot.slot.model ?? role?.model ?? null, effort: pin.effort ?? role?.effort ?? null },
+      tuning: { agent: this.workerAgent(slotId), model: pin.model ?? slot.slot.model ?? role?.model ?? null, effort: pin.effort ?? role?.effort ?? null },
       question: q && typeof q.body === 'object' && q.body.kind === 'question' ? { text: q.body.question, open: slot.ticket.state === 'ANSWER' } : null,
     };
   }
@@ -700,8 +771,18 @@ export class V8Workbench {
     if (latest?.verdict === 'passed' && latest.reportMessageId === report?.id) {
       // Requirement 32/33: review by the worker's own agent is no second opinion; the pass says so (C3, finding 11).
       const acp = this.o.settings.shell === 'acp' ? this.o.settings.acp : undefined;
-      const same = !!acp && (acp.reviewer ?? acp.lead).agent === acp.worker.agent;
-      return { reviewPassed: true, reviewNote: same ? tr('这次审查和干活用的是同一家 agent，不算换一家审。') : null };
+      // By the company behind the models actually used, not only the agent: a Codex desk on a Claude model through
+      // Magpie is Anthropic's work (1.0 review, finding 12). Unknown makers fall back to comparing the agents.
+      let same = false;
+      if (acp) {
+        const reviewer = acp.reviewer ?? acp.lead;
+        const slotId = this.scheduler.lastSlot(ticketId);
+        const workerAgent = this.workerAgent(slotId) ?? acp.worker.agent;
+        const workerModel = this.scheduler.ticketSupply(ticketId).model ?? this.ranAt(slotId)?.model ?? acp.worker.model ?? null;
+        const a = makerOf(workerAgent, workerModel), b = makerOf(reviewer.agent, reviewer.model ?? null);
+        same = a && b ? a === b : workerAgent === reviewer.agent;
+      }
+      return { reviewPassed: true, reviewNote: same ? tr('这次审查和干活用的是同一家公司的模型，不算换一家审。') : null };
     }
     const notes = [...this.scheduler.messages(ticketId)].reverse().filter(m => m.author === 'system');
     const asked = notes.findIndex(m => anyLang('老板要求重新审一次。').includes(String(m.body)));
@@ -719,9 +800,11 @@ export class V8Workbench {
    */
   private acpLabel(acp: NonNullable<V8Settings['acp']>): string {
     const reviewer = acp.reviewer ?? acp.lead;
-    const parts = [tr('本机 agent · 主理小怪 用 {0}，干活用 {1}', [agentName(acp.lead.agent), agentName(acp.worker.agent)])];
+    // The desks may run on different agents now (requirement 61): name each once.
+    const workers = [...new Set(desksOf(this.o.settings).map(d => d.agent))];
+    const parts = [tr('本机 agent · 主理小怪 用 {0}，干活用 {1}', [agentName(acp.lead.agent), workers.map(agentName).join(tr('、'))])];
     if (this.o.settings.review !== false) {
-      parts.push(reviewer.agent === acp.worker.agent
+      parts.push(workers.includes(reviewer.agent)
         ? tr('审查和干活是同一家（{0}），不算换一家审', [agentName(reviewer.agent)])
         : tr('审查用 {0}', [agentName(reviewer.agent)]));
     }
@@ -830,6 +913,8 @@ export class V8Workbench {
     const log = (kind: string, text: string) => { t.log.unshift({ id: 'l' + ++this.seq, kind, text: text.slice(0, 160) }); t.log.length = Math.min(t.log.length, MAX_LOG); };
     switch (a.type) {
       case 'launched':
+        // The desk as it was when this work started: what it runs on until it ends (1.0 review, finding 7).
+        this.atLaunch.set(a.slotId, this.desk(a.slotId));
         this.slotLive.set(a.slotId, { ticketId: a.ticketId, startedAt: this.now(), live: null, phase: 'working', step: 0, reportingUntil: 0, cost: 0, bases: new Set() });
         t.startedAt = this.now();
         this.pushFeed(this.label(a.ticketId), tr('开工：') + this.scheduler.ticket(a.ticketId).title, 'slot');
