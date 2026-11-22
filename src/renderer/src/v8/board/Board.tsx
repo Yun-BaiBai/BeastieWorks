@@ -336,9 +336,23 @@ function TalkBar({ data, onSay, onAnswer, onPick, onNextStage, onSplit }: Omit<B
   const box = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   const last = data.talk[data.talk.length - 1]?.id;
-  useEffect(() => { const el = box.current; if (el && pinned.current) el.scrollTop = el.scrollHeight; }, [last, data.talk.length]);
-  return <div className="v8-talk v8-sticker">
-    <div className="v8-head"><span className="v8-cap">{tr('对讲栏 · 你只用跟')}{leadName()}{tr('说话')}</span><span className="v8-cap">{tr('Enter 发话')}</span></div>
+  // 拉高 (老板 2026-11-22): the talk bar grows upward over the board to show more of the talk, and back; Esc closes.
+  const [tall, setTall] = useState(false);
+  useEffect(() => { const el = box.current; if (el && pinned.current) el.scrollTop = el.scrollHeight; }, [last, data.talk.length, tall]);
+  useEffect(() => {
+    if (!tall) return;
+    const esc = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setTall(false); } };
+    window.addEventListener('keydown', esc, true);
+    return () => window.removeEventListener('keydown', esc, true);
+  }, [tall]);
+  return <div className={'v8-talk v8-sticker' + (tall ? ' is-tall' : '')}>
+    <div className="v8-head"><span className="v8-cap">{tr('对讲栏 · 你只用跟')}{leadName()}{tr('说话')}</span>
+      <button type="button" className="v8-talk-size" onClick={() => setTall(t => !t)} aria-pressed={tall}
+        title={tall ? tr('收回去（Esc）') : tr('拉高，看更多对话记录')} aria-label={tall ? tr('收回去（Esc）') : tr('拉高，看更多对话记录')}>
+        {tall
+          ? <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" d="M4 14h6v6M20 10h-6V4M10 14l-7 7M14 10l7-7" /></svg>
+          : <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" /></svg>}
+      </button></div>
     <div className="v8-chat" ref={box} aria-live="polite" tabIndex={0} aria-label={tr('对话记录，可以往上翻')}
       onScroll={e => { const el = e.currentTarget; pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; }}>
       <div className="v8-chat-in">

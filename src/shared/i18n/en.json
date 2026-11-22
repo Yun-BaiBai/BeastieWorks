@@ -377,7 +377,6 @@
  "档案 →": "Archive →",
  "对讲栏 · 你只用跟": "Talk bar · you only talk to ",
  "说话": "",
- "Enter 发话": "Enter to send",
  "对话记录，可以往上翻": "Conversation; scroll up for more",
  "（它推荐）": " (it recommends)",
  "跟": "Tell ",
@@ -937,5 +936,7 @@
  "收下中途出错，有几个文件没能放回原样（{0}），下次打开程序会再放回一次。原因：": "Accepting failed part way and some files couldn't be put back ({0}); the app will try again next time it opens. Reason: ",
  " · 等{0}": " · waiting for {0}",
  "还有 {0} 张": "{0} more",
- "没复述成：": "Couldn't retell it: "
+ "没复述成：": "Couldn't retell it: ",
+ "收回去（Esc）": "Shrink back (Esc)",
+ "拉高，看更多对话记录": "Make it taller to see more of the talk"
 }
