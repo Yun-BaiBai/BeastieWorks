@@ -6,7 +6,8 @@
 #
 # A pushed version tag (v1.2.3) is published here too (老板 2026-11-28: GitHub makes the release itself, so the
 # installer never travels through anyone's computer). The notes come from release-notes/<tag>.md, and the installer's
-# sha256 is added. The tag is pushed only when the boss says to release. A run started by hand only builds.
+# sha256 is added. The tag is pushed only when the boss says to release. A run started by hand only builds, unless it
+# names a tag already pushed (the release is then made for that tag from the code it was started on).
 #
 # Repository settings once SignPath approves (Settings → Secrets and variables → Actions):
 #   variables: SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG, SIGNPATH_SIGNING_POLICY_SLUG
@@ -15,6 +16,11 @@ name: Windows installer
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Publish the release for this existing tag (v1.2.3); empty: only build'
+        required: false
+        default: ''
   push:
     tags: ['v*']
 
@@ -105,11 +111,11 @@ jobs:
           if-no-files-found: error
 
       - name: Publish the release
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ github.ref_type == 'tag' || inputs.tag != '' }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           if ("v$version" -ne $env:TAG) { Write-Error "tag $env:TAG does not match package.json $version"; exit 1 }
