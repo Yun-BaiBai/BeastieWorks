@@ -4,8 +4,9 @@
 # repository on GitHub-hosted runners, and checks that the file came from this workflow. Until the project is approved
 # and the repository variables below are set, the signing step is skipped and the unsigned installer is kept.
 #
-# Nothing is published from here: the installer is left as a workflow artifact, and the boss decides when to make a
-# release (老板的规矩: pushes and releases are public, ask each time).
+# A pushed version tag (v1.2.3) is published here too (老板 2026-11-28: GitHub makes the release itself, so the
+# installer never travels through anyone's computer). The notes come from release-notes/<tag>.md, and the installer's
+# sha256 is added. The tag is pushed only when the boss says to release. A run started by hand only builds.
 #
 # Repository settings once SignPath approves (Settings → Secrets and variables → Actions):
 #   variables: SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG, SIGNPATH_SIGNING_POLICY_SLUG
@@ -19,7 +20,8 @@ on:
 
 permissions:
   actions: read
-  contents: read
+  # To create the release (the last step, tag pushes only).
+  contents: write
 
 jobs:
   build:
@@ -101,3 +103,22 @@ jobs:
           name: installer-signed
           path: signed
           if-no-files-found: error
+
+      - name: Publish the release
+        if: ${{ github.ref_type == 'tag' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ("v$version" -ne $env:TAG) { Write-Error "tag $env:TAG does not match package.json $version"; exit 1 }
+          $notes = "release-notes/$env:TAG.md"
+          if (-not (Test-Path $notes)) { Write-Error "missing $notes"; exit 1 }
+          # The signed installer when SignPath signed one, otherwise the unsigned one.
+          $exe = Get-ChildItem signed, dist -Filter "Beastie-Works-$version-win-x64-setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { Write-Error 'installer missing'; exit 1 }
+          $sha = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash
+          $body = (Get-Content $notes -Raw -Encoding utf8).TrimEnd() + "`n`nSHA256: ``$sha`` (GitHub run $env:GITHUB_RUN_ID, all tests passed before packaging)`n"
+          Set-Content -Path release-body.md -Value $body -Encoding utf8NoBOM
+          gh release create $env:TAG $exe.FullName --verify-tag --title "小怪工坊 Beastie Works $version" --notes-file release-body.md
