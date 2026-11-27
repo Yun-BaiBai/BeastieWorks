@@ -3,7 +3,7 @@ import './agents.css';
 import { useEffect, useRef, useState } from 'react';
 import type { AgentQuota, ChatTurn, ChoiceList, RosterRow, RosterView, SessionChoices, SignInFlow } from '@shared/v8/agents';
 import { QuotaLine } from '../QuotaLine';
-import { InstallBox } from '../InstallBox';
+import { ConnectAll, InstallBox } from '../InstallBox';
 import { art } from '../gremlins';
 import type { Hero } from './Pages';
 
@@ -45,7 +45,8 @@ export function AgentsPage({ hero }: { hero: Hero }) {
 
   const rows = view?.rows ?? [];
   const here = rows.filter(r => r.state === 'ready' || r.state === 'missing_program');
-  const shown = all ? rows : here;
+  const found = rows.filter(r => r.onComputer);
+  const shown = all ? rows : [...here, ...found];
   const agent = rows.find(r => r.id === picked) ?? null;
   const talk = picked ? lines[picked] ?? [] : [];
   const add = (id: string, more: Line[]) => setLines(old => ({ ...old, [id]: [...(old[id] ?? []), ...more] }));
@@ -82,13 +83,14 @@ export function AgentsPage({ hero }: { hero: Hero }) {
     <div className="v8a-head">
       <img className="v8-g v8p-hero" style={hero} src={art('alien', 'reading')} alt="" />
       <div><span className="v8-cap">{tr('agent 名单 · 这台电脑')}</span><h1>{tr('谁在，谁能说话')}</h1>
-        <p className="v8m-sub">{view ? tr('装好的 {0} 个，名单上一共 {1} 个。看名单和额度都不花额度。', [here.length, rows.length]) : failed ? tr('名单没读出来：') + failed : tr('正在看这台电脑上有哪些 agent…')}</p></div>
+        <p className="v8m-sub">{view ? (found.length ? tr('装好的 {0} 个；你电脑上还有 {1} 个没接上。名单上一共 {2} 个，看名单和额度都不花额度。', [here.length, found.length, rows.length]) : tr('装好的 {0} 个，名单上一共 {1} 个。看名单和额度都不花额度。', [here.length, rows.length])) : failed ? tr('名单没读出来：') + failed : tr('正在看这台电脑上有哪些 agent…')}</p></div>
     </div>
 
     <div className="v8a-list" role="list">
+      {view && <ConnectAll rows={rows} onDone={v => { setView(v); readQuotas(v.rows, false); }} />}
       {shown.map(r => <button key={r.id} type="button" role="listitem" className={'v8a-row is-' + r.state + (r.id === picked ? ' is-picked' : '')} aria-pressed={r.id === picked} onClick={() => setPicked(r.id)}>
         <b>{r.name}</b>
-        <span className={'v8a-tag is-' + r.state}>{STATE[r.state]}</span>
+        <span className={'v8a-tag is-' + r.state + (r.onComputer ? ' is-found' : '')}>{r.onComputer ? tr('电脑上有') : STATE[r.state]}</span>
         {r.state === 'ready' && <span className={'v8a-tag is-sign-' + r.signIn}>{SIGN[r.signIn]}</span>}
         <small>{r.note}</small>
         {r.state === 'ready' && <QuotaLine q={quotas[r.id]} />}

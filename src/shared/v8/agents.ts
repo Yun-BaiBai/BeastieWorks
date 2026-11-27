@@ -15,6 +15,8 @@ export interface RosterRow {
   canInstall?: boolean;
   /** Installed by the app from the official list: its version, a newer one if listed, and that it can be removed. */
   installed?: { version: string; update: string | null } | null;
+  /** Not connected yet, but the person already has this agent on the computer (its own program or folder is there). */
+  onComputer?: boolean;
 }
 
 /** What installing an agent downloads (asked before downloading). bytes null: the server did not say. */

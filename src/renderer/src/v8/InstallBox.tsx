@@ -65,3 +65,39 @@ export function InstallBox({ row, onDone }: { row: RosterRow; onDone(view: Roste
     {problem && <small className="v8a-problem">{problem}</small>}
   </div>;
 }
+
+/**
+ * 老板 2026-11-27: connect every agent the person already has on this computer at once. The first click asks each
+ * download's size (downloading nothing); the second installs them one after another, the same way InstallBox does.
+ */
+export function ConnectAll({ rows, onDone }: { rows: RosterRow[]; onDone(view: RosterView): void }) {
+  const found = rows.filter(r => r.onComputer && r.state === 'not_installed' && r.canInstall);
+  const key = found.map(r => r.id).join(',');
+  const [sizes, setSizes] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [problems, setProblems] = useState<string[]>([]);
+  useEffect(() => { setSizes(null); setProblems([]); }, [key]);
+  if (!found.length) return null;
+
+  const ask = () => {
+    setBusy(tr('正在问要下载多大…（不下载）'));
+    void Promise.all(found.map(r => window.cth.v8.agentSize(r.id).then(s => r.name + tr('：') + sizeText(s), e => r.name + tr('：大小没问到（') + why(e) + tr('）'))))
+      .then(setSizes).finally(() => setBusy(null));
+  };
+  const go = async () => {
+    const failed: string[] = [];
+    for (const r of found) {
+      setBusy(tr('正在接上 {0}…', [r.name]));
+      try { onDone(await window.cth.v8.agentInstall(r.id)); } catch (e) { failed.push(r.name + tr('没装成：') + why(e)); }
+    }
+    setBusy(null); setSizes(null); setProblems(failed);
+  };
+  const names = found.map(r => r.name).join(tr('、'));
+  return <div className="v8a-signin v8a-found">
+    <p>{tr('你电脑上已经有 {0}，还没接进小怪工坊。接上后用的是你平时的设置和技能；装在小怪工坊自己的文件夹里，不动电脑上别的东西。', [names])}</p>
+    {sizes && <ul className="v8a-sizes">{sizes.map(s => <li key={s}>{s}</li>)}</ul>}
+    <button type="button" className="v8-send" disabled={busy !== null} onClick={sizes ? () => void go() : ask}>
+      {busy ?? (sizes ? tr('下载并接上这 {0} 个', [found.length]) : tr('一键接上这 {0} 个', [found.length]))}</button>
+    {problems.map(p => <small key={p} className="v8a-problem">{p}</small>)}
+  </div>;
+}

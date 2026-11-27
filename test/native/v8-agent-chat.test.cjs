@@ -310,3 +310,32 @@ test('what a roster chat costs is handed on, so it reaches the ledger (C1: S5.3)
   await chats.say('fake', 'again');
   assert.deepEqual(spent, [[0.25, 'reported'], [0.25, 'reported']], 'the running total becomes one charge per turn');
 });
+
+test('agents already on the computer are named and listed before the rest, even before they are connected', async t => {
+  const { agentsOnComputer } = load('src/main/v8/hostAgents.ts');
+  const dir = tmp(t), home = path.join(dir, 'home'), appData = path.join(home, 'AppData', 'Roaming');
+  const env = { PATH: '', USERPROFILE: home, HOME: home, APPDATA: appData };
+  assert.equal(agentsOnComputer(env).size, 0, 'an empty home has none');
+  // Codex signed in (its own auth file), and Claude Code kept by the Claude desktop app.
+  fs.mkdirSync(path.join(home, '.codex'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.codex', 'auth.json'), '{}');
+  fs.mkdirSync(path.join(appData, 'Claude', 'claude-code'), { recursive: true });
+  const found = agentsOnComputer(env);
+  assert.deepEqual([...found.keys()].sort(), ['claude-acp', 'codex-acp']);
+  assert.equal(found.get('codex-acp').signedIn, true);
+  assert.equal(found.get('claude-acp').signedIn, null);
+
+  const bundledFile = path.join(dir, 'registry.json');
+  fs.writeFileSync(bundledFile, JSON.stringify({ version: '1', agents: [
+    { id: 'aaa', name: 'Aaa', version: '1.0.0', distribution: { npx: { package: 'aaa-acp@1.0.0' } } },
+    { id: 'codex-acp', name: 'Codex', version: '1.0.0', distribution: { npx: { package: 'codex-acp@1.0.0' } } },
+  ] }));
+  const offline = async () => { throw new Error('offline'); };
+  const r = await readRoster({ registry: { cacheFile: path.join(dir, 'cache.json'), bundledFile, installRoot: path.join(dir, 'agents'), node }, env, fetchImpl: offline, onComputer: () => found });
+  const codex = r.rows.find(x => x.id === 'codex-acp'), aaa = r.rows.find(x => x.id === 'aaa');
+  assert.equal(codex.state, 'not_installed');
+  assert.equal(codex.onComputer, true);
+  assert.match(codex.note, /你电脑上有 Codex，已登录/);
+  assert.equal(aaa.onComputer, undefined);
+  assert.ok(r.rows.indexOf(codex) < r.rows.indexOf(aaa), 'the one on the computer comes first');
+});

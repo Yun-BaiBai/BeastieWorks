@@ -938,5 +938,14 @@
  "还有 {0} 张": "{0} more",
  "没复述成：": "Couldn't retell it: ",
  "收回去（Esc）": "Shrink back (Esc)",
- "拉高，看更多对话记录": "Make it taller to see more of the talk"
+ "拉高，看更多对话记录": "Make it taller to see more of the talk",
+ "你电脑上有 {0}{1}。点开装上接入程序，就能用你平时的设置和技能。": "{0} is on your computer{1}. Open it to install the connector, and it works with your usual settings and skills.",
+ "，已登录": ", signed in",
+ "：大小没问到（": ": size unknown (",
+ "正在接上 {0}…": "Connecting {0}…",
+ "你电脑上已经有 {0}，还没接进小怪工坊。接上后用的是你平时的设置和技能；装在小怪工坊自己的文件夹里，不动电脑上别的东西。": "{0} already on your computer, not yet connected to Beastie Works. Once connected they use your usual settings and skills; the connectors go in Beastie Works' own folder and nothing else on the computer is touched.",
+ "下载并接上这 {0} 个": "Download and connect these {0}",
+ "一键接上这 {0} 个": "Connect these {0}",
+ "装好的 {0} 个；你电脑上还有 {1} 个没接上。名单上一共 {2} 个，看名单和额度都不花额度。": "{0} installed; {1} more on your computer not yet connected. {2} on the list; reading the list and quota costs nothing.",
+ "电脑上有": "On this PC"
 }

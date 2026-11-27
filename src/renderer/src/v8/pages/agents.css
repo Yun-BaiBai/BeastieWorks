@@ -144,3 +144,7 @@
 .v8d-backups li { display: grid; grid-template-columns: 18px minmax(0, 1fr) 130px auto auto; gap: 8px; align-items: center; }
 .v8d-backups select { max-width: none; width: 100%; padding: 6px 8px; border-radius: 9px; border: 2px solid var(--edge); background: var(--paper); color: var(--ink); font: 600 13px var(--text); }
 .v8d-backups > .v8-quiet-btn { align-self: flex-start; }
+/* Agents already on the computer, not connected yet (老板 2026-11-27). */
+.v8a-tag.is-found { background: var(--amber2); color: #15120f; border-color: var(--amber); }
+.v8a-found { margin-bottom: 10px; }
+.v8a-sizes { margin: 6px 0 10px; padding-left: 18px; font-size: 12.5px; color: var(--ink2); }

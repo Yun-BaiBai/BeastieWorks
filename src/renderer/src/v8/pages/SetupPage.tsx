@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import type { RosterRow, SessionChoices } from '@shared/v8/agents';
 import type { V8AcpRole, V8Settings } from '@shared/v8/settings';
 import { art } from '../gremlins';
+import { ConnectAll } from '../InstallBox';
 import { setThemeChoice, useThemeChoice, type ThemeChoice } from '../../design/theme';
 import type { Hero } from './Pages';
 
@@ -126,7 +127,19 @@ export function SetupPage({ hero, first, onDone }: { hero: Hero; first: boolean;
         <p className="v8m-sub">{tr('选一个项目文件夹，再给三个角色各挑一个这台电脑上装好的 agent。以后随时能在顶栏"设置"里改。')}</p></div>
     </div>
     <div className="v8u-body">
-      {rows && !ready.length && <div className="v8a-signin"><p>{tr('这台电脑上还没有装好的 agent。先去"agent 名单"装一个、登录好，再回来。')}</p></div>}
+      {rows && <ConnectAll rows={rows} onDone={v => {
+        setRows(v.rows);
+        // On first run the roles are picked again (signed-in agents first), so the ones just connected are used; later,
+        // only roles still empty take them.
+        const ok = v.rows.filter(r => r.state === 'ready'), signed = ok.filter(r => r.signIn !== 'no');
+        const pick = (not?: string) => (signed.find(r => r.id !== not) ?? signed[0] ?? ok[0])?.id;
+        setRoles(old => {
+          const keep = (r: V8AcpRole | null) => first ? null : r;
+          const lead = keep(old.lead) ?? (pick() ? { agent: pick()! } : null), worker = keep(old.worker) ?? (pick() ? { agent: pick()! } : null);
+          return { lead, worker, reviewer: keep(old.reviewer) ?? (pick(worker?.agent) ? { agent: pick(worker?.agent)! } : null) };
+        });
+      }} />}
+      {rows && !ready.length && !rows.some(r => r.onComputer) && <div className="v8a-signin"><p>{tr('这台电脑上还没有装好的 agent。先去"agent 名单"装一个、登录好，再回来。')}</p></div>}
       <div className="v8u-line"><span className="v8-cap">{tr('项目文件夹')}</span><code>{folder ?? tr('还没选')}</code>
         <button type="button" className="v8-quiet-btn" onClick={() => { void choose(); }}>{folder ? tr('换一个') : tr('选文件夹')}</button></div>
       <label className="v8u-line"><span className="v8-cap">{tr('主理 bot 叫什么')}</span>

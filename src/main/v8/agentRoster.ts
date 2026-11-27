@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { AcpShellOptions } from './acpShell';
 import { extraAgents } from './acpAgents';
+import { agentsOnComputer, type OnComputer } from './hostAgents';
 import { availability, loadRegistry, type RegistryAgent, type RegistryPaths } from './acpRegistry';
 import { QUIRKS } from './acpQuirks';
 import type { RosterRow } from '../../shared/v8/agents';
@@ -22,6 +23,8 @@ export interface RosterDeps {
   dataDir?: string;
   /** The Magpie that ships with the app: its address, started on first use (magpieService.ts). */
   magpieOrigin?: () => Promise<string>;
+  /** The agents the person already has on this computer, not yet connected (hostAgents.ts). */
+  onComputer?(env: NodeJS.ProcessEnv): Map<string, OnComputer>;
 }
 
 export interface Roster { rows: RosterRow[]; launches: Map<string, AcpShellOptions>; source: string }
@@ -43,6 +46,7 @@ export async function readRoster(deps: RosterDeps): Promise<Roster> {
   const { registry, source } = await loadRegistry(deps.registry, deps.fetchImpl);
   const launches = new Map<string, AcpShellOptions>();
   const rows: RosterRow[] = [];
+  const here = (deps.onComputer ?? agentsOnComputer)(env);
 
   const add = async (id: string, listedName: string, website: string | null, found: Resolved) => {
     const name = QUIRKS[id]?.displayName ?? listedName;
@@ -51,7 +55,12 @@ export async function readRoster(deps: RosterDeps): Promise<Roster> {
     const adopted = QUIRKS[id]?.adopt ? await QUIRKS[id]!.adopt!(env).catch(() => null) : null;
     if (adopted) found = { launch: adopted.launch };
     if ('launch' in found) found = { launch: { ...found.launch, label: name } };
-    if (!('launch' in found)) { rows.push({ id, name, website, state: found.state, signIn: 'unknown', canSignIn: false, note: found.note, canInstall: found.canInstall === true, installed: null }); return; }
+    if (!('launch' in found)) {
+      const mine = found.state === 'not_installed' && found.canInstall ? here.get(id) : undefined;
+      const note = mine ? tr('你电脑上有 {0}{1}。点开装上接入程序，就能用你平时的设置和技能。', [name, mine.signedIn ? tr('，已登录') : '']) : found.note;
+      rows.push({ id, name, website, state: found.state, signIn: 'unknown', canSignIn: false, note, canInstall: found.canInstall === true, installed: null, ...(mine ? { onComputer: true } : {}) });
+      return;
+    }
     const quirk = QUIRKS[id];
     const ready = quirk?.prepare && !adopted ? quirk.prepare(found.launch, env, { dataDir: deps.dataDir ?? null }) : { launch: found.launch };
     if ('missing' in ready) { rows.push({ id, name, website, state: 'missing_program', signIn: 'unknown', canSignIn: false, note: ready.missing, installed }); return; }
@@ -67,7 +76,7 @@ export async function readRoster(deps: RosterDeps): Promise<Roster> {
     ...registry.agents.map(agent => add(agent.id, agent.name, agent.website ?? null, resolveLaunch(deps, agent))),
     ...extraAgents({}, env).map(extra => add(extra.id, extra.name, extra.website, extra.launch ? { launch: extra.launch } : { state: 'not_installed', note: tr('这台电脑上没找到') })),
   ]);
-  const rank = (r: RosterRow) => r.state === 'ready' ? (r.signIn === 'yes' ? 0 : r.signIn === 'unknown' ? 1 : 2) : r.state === 'missing_program' ? 3 : r.state === 'not_installed' ? 4 : 5;
+  const rank = (r: RosterRow) => r.state === 'ready' ? (r.signIn === 'yes' ? 0 : r.signIn === 'unknown' ? 1 : 2) : r.state === 'missing_program' || r.onComputer ? 3 : r.state === 'not_installed' ? 4 : 5;
   rows.sort((x, y) => rank(x) - rank(y) || x.name.localeCompare(y.name));
   return { rows, launches, source };
 }
