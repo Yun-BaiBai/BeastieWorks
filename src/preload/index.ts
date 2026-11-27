@@ -59,6 +59,8 @@ const api = {
     magpieModels: (fresh?: boolean): Promise<import('../shared/v8/agents').MagpieModelView[]> => ipcRenderer.invoke('v8:magpieModels', fresh === true),
     agentSize: (id: string): Promise<import('../shared/v8/agents').InstallSize> => ipcRenderer.invoke('v8:agentSize', id),
     agentInstall: (id: string): Promise<import('../shared/v8/agents').RosterView> => ipcRenderer.invoke('v8:agentInstall', id),
+    /** Bytes of the agent on disk so far while it installs; null when it is not installing. */
+    agentInstallProgress: (id: string): Promise<number | null> => ipcRenderer.invoke('v8:agentInstallProgress', id),
     agentUninstall: (id: string): Promise<import('../shared/v8/agents').RosterView> => ipcRenderer.invoke('v8:agentUninstall', id),
     skillsEnable: (ids: string[], on: boolean): Promise<import('../shared/v8/skills').SkillLibraryView> => ipcRenderer.invoke('v8:skillsEnable', ids, on),
     /** A5: the tools behind the skills that ship with the app. Size first (downloads nothing), then install. */

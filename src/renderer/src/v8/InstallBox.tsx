@@ -4,9 +4,26 @@ import type { InstallSize, RosterRow, RosterView } from '@shared/v8/agents';
 
 const why = (e: unknown) => e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e);
 const mb = (b: number) => b >= 1024 * 1024 ? (b / 1024 / 1024).toFixed(b >= 10 * 1024 * 1024 ? 0 : 1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
+/** While an agent installs: how much is on disk so far and for how long, every 2 seconds. */
+function useProgress(id: string | null): string | null {
+  const [text, setText] = useState<string | null>(null);
+  useEffect(() => {
+    setText(null);
+    if (!id) return;
+    const t0 = Date.now();
+    const tick = () => window.cth.v8.agentInstallProgress(id).then(b => {
+      const s = Math.round((Date.now() - t0) / 1000);
+      setText(b ? tr('已下载约 {0}，用了 {1} 秒', [mb(b), s]) : tr('用了 {0} 秒', [s]));
+    }, () => undefined);
+    const timer = setInterval(tick, 2000);
+    return () => clearInterval(timer);
+  }, [id]);
+  return text;
+}
+
 export function sizeText(s: InstallSize): string {
   const base = s.bytes === null ? tr('要从 {0} 下载，大小对方没说', [s.from])
-    : s.kind === 'archive' ? tr('要从 {0} 下载约 {1}', [s.from, mb(s.bytes)]) : tr('要从 {0} 下载，主包约 {1}，加上它用到的其他包会更大', [s.from, mb(s.bytes)]);
+    : s.kind === 'archive' ? tr('要从 {0} 下载约 {1}', [s.from, mb(s.bytes)]) : tr('要从 {0} 下载，主包约 {1}；连同它要用的其他包，实际可能大很多', [s.from, mb(s.bytes)]);
   return s.note ? tr('{0}；{1}', [base, s.note]) : base;
 }
 
@@ -17,6 +34,7 @@ export function sizeText(s: InstallSize): string {
 export function InstallBox({ row, onDone }: { row: RosterRow; onDone(view: RosterView): void }) {
   const [size, setSize] = useState<InstallSize | string | null>(null);
   const [busy, setBusy] = useState<'install' | 'remove' | null>(null);
+  const progress = useProgress(busy === 'install' ? row.id : null);
   const [sure, setSure] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   // missing_program with an install of ours: the agent's own program is missing (Codex on a computer without Codex).
@@ -43,6 +61,7 @@ export function InstallBox({ row, onDone }: { row: RosterRow; onDone(view: Roste
     return <div className="v8a-signin">
       <p>{row.name} {tr(' 还没装。')}{sizeLine}{tr('装在小怪工坊自己的文件夹里，不动电脑上别的东西。')}</p>
       <button type="button" className="v8-send" disabled={busy !== null || size === null} onClick={install}>{busy === 'install' ? tr('正在下载和安装…') : tr('下载并装上')}</button>
+      {progress && <small className="v8a-progress">{progress}</small>}
       {problem && <small className="v8a-problem">{problem}</small>}
     </div>;
   }
@@ -50,6 +69,7 @@ export function InstallBox({ row, onDone }: { row: RosterRow; onDone(view: Roste
     return <div className="v8a-signin">
       <p>{row.note} {sizeLine}</p>
       <button type="button" className="v8-send" disabled={busy !== null || size === null} onClick={install}>{busy === 'install' ? tr('正在下载和安装…') : tr('重新装')}</button>
+      {progress && <small className="v8a-progress">{progress}</small>}
       {problem && <small className="v8a-problem">{problem}</small>}
     </div>;
   }
@@ -62,6 +82,7 @@ export function InstallBox({ row, onDone }: { row: RosterRow; onDone(view: Roste
       <button type="button" className="v8p-act" disabled={busy !== null} onClick={remove}>{busy === 'remove' ? tr('正在卸载…') : sure ? tr('确定卸载？再点一次') : tr('卸载')}</button>
       {sure && busy === null && <button type="button" className="v8-quiet-btn" onClick={() => setSure(false)}>{tr('不卸了')}</button>}
     </div>
+    {progress && <small className="v8a-progress">{progress}</small>}
     {problem && <small className="v8a-problem">{problem}</small>}
   </div>;
 }
@@ -75,6 +96,8 @@ export function ConnectAll({ rows, onDone }: { rows: RosterRow[]; onDone(view: R
   const key = found.map(r => r.id).join(',');
   const [sizes, setSizes] = useState<string[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [now, setNow] = useState<string | null>(null);
+  const progress = useProgress(now);
   const [problems, setProblems] = useState<string[]>([]);
   useEffect(() => { setSizes(null); setProblems([]); }, [key]);
   if (!found.length) return null;
@@ -87,10 +110,10 @@ export function ConnectAll({ rows, onDone }: { rows: RosterRow[]; onDone(view: R
   const go = async () => {
     const failed: string[] = [];
     for (const r of found) {
-      setBusy(tr('正在接上 {0}…', [r.name]));
+      setBusy(tr('正在接上 {0}…', [r.name])); setNow(r.id);
       try { onDone(await window.cth.v8.agentInstall(r.id)); } catch (e) { failed.push(r.name + tr('没装成：') + why(e)); }
     }
-    setBusy(null); setSizes(null); setProblems(failed);
+    setNow(null); setBusy(null); setSizes(null); setProblems(failed);
   };
   const names = found.map(r => r.name).join(tr('、'));
   return <div className="v8a-signin v8a-found">
@@ -98,6 +121,7 @@ export function ConnectAll({ rows, onDone }: { rows: RosterRow[]; onDone(view: R
     {sizes && <ul className="v8a-sizes">{sizes.map(s => <li key={s}>{s}</li>)}</ul>}
     <button type="button" className="v8-send" disabled={busy !== null} onClick={sizes ? () => void go() : ask}>
       {busy ?? (sizes ? tr('下载并接上这 {0} 个', [found.length]) : tr('一键接上这 {0} 个', [found.length]))}</button>
+    {progress && <small className="v8a-progress">{progress}</small>}
     {problems.map(p => <small key={p} className="v8a-problem">{p}</small>)}
   </div>;
 }

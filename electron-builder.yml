@@ -37,6 +37,13 @@ extraResources:
   # Git (MinGit, put in build/git by tools/prepare-git.cjs), used when the computer has none (src/main/index.ts).
   - from: build/git
     to: git
+  # npm whole, with its own modules (老板 2026-11-28: packed as a dependency, electron-builder 26 left npm's bundled
+  # modules out, so no agent could be installed). It is a development dependency so it is not packed twice.
+  # Copied from node_modules with a filter: a node_modules folder at the top of what is copied is always left out
+  # (app-builder-lib util/filter.js), and npm's own is then one level down.
+  - from: node_modules
+    to: .
+    filter: ["npm/**/*"]
   # The skills that ship with the app (A5), each with its license (src/main/v8/ipc.ts reads them from here).
   - from: resources/skills
     to: skills
@@ -45,7 +52,6 @@ extraResources:
 # starts, the npm that installs agents, and better-sqlite3's native module.
 asarUnpack:
   - "**/node_modules/better-sqlite3/**"
-  - "**/node_modules/npm/**"
   - "out/main/host-tool-relay.cjs"
   # 语音输入 (requirement 67): the speech engine and its native library run in a child process, from disk.
   - "**/node_modules/transcribe-cpp/**"

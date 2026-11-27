@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { rmTree } from './rmTree';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, readdirSync, statSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { AcpShellOptions } from './acpShell';
 
@@ -88,6 +88,27 @@ function agentDir(p: RegistryPaths, agent: RegistryAgent): string {
   return path.join(p.installRoot, agent.id, versionDir(agent.version));
 }
 
+/**
+ * How much of this agent is on disk so far, for the progress shown while it installs (老板 2026-11-28: a 200 MB
+ * install showed only "connecting…" for minutes and looked stuck).
+ */
+export function installedBytes(p: RegistryPaths, agentId: string, since = 0): number {
+  let total = 0;
+  const walk = (dir: string, newOnly = false) => {
+    let names: string[];
+    try { names = readdirSync(dir); } catch { return; }
+    for (const n of names) {
+      const f = path.join(dir, n);
+      try { const s = statSync(f); if (s.isDirectory()) walk(f, newOnly); else if (!newOnly || s.mtimeMs >= since) total += s.size; } catch { /* gone meanwhile */ }
+    }
+  };
+  walk(path.join(p.installRoot, agentId));
+  // A package still downloading sits in npm's cache until it is whole: count the files npm is writing there now.
+  const cache = process.env.npm_config_cache || (process.platform === 'win32' ? path.join(process.env.LOCALAPPDATA || '', 'npm-cache') : path.join(process.env.HOME || '', '.npm'));
+  if (since) walk(path.join(cache, '_cacache', 'tmp'), true);
+  return total;
+}
+
 /** Versions of this agent already in the app's folder, newest first (by modification time). */
 export function installedVersions(p: RegistryPaths, agentId: string): string[] {
   const root = path.join(p.installRoot, agentId);
@@ -162,6 +183,9 @@ export function run(command: string, args: string[], cwd: string, env?: Record<s
   });
 }
 
+/** A download gives up only when nothing has arrived for this long. */
+const IDLE_MS = 2 * 60 * 1000;
+
 async function installBinary(dir: string, target: BinaryTarget, fetchImpl: typeof fetch): Promise<void> {
   const url = new URL(target.archive);
   if (url.protocol !== 'https:') throw new Error('ACP_REGISTRY_DOWNLOAD_NOT_HTTPS');
@@ -171,12 +195,28 @@ async function installBinary(dir: string, target: BinaryTarget, fetchImpl: typeo
   let bytes: Buffer | null = null;
   if (target.sha256 && existsSync(kept)) { const had = readFileSync(kept); if (matches(had)) bytes = had; }
   if (!bytes) {
-    const res = await fetchImpl(url, { signal: AbortSignal.timeout(10 * 60 * 1000) });
-    if (!res.ok) throw new Error('download failed: HTTP ' + res.status);
-    bytes = Buffer.from(await res.arrayBuffer());
-    if (!matches(bytes)) throw new Error('ACP_REGISTRY_CHECKSUM_MISMATCH');
-    mkdirSync(path.dirname(kept), { recursive: true });
-    writeFileSync(kept, bytes);
+    // Written to disk as it arrives (老板 2026-11-28): the progress line counts it, and a slow connection is not cut
+    // off by a deadline for the whole download, only when nothing has arrived for two minutes.
+    const part = kept + '.part', idle = new AbortController();
+    let timer = setTimeout(() => idle.abort(), IDLE_MS);
+    try {
+      const res = await fetchImpl(url, { signal: idle.signal });
+      if (!res.ok) throw new Error('download failed: HTTP ' + res.status);
+      mkdirSync(path.dirname(kept), { recursive: true });
+      writeFileSync(part, '');
+      if (res.body) {
+        for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+          appendFileSync(part, chunk);
+          clearTimeout(timer); timer = setTimeout(() => idle.abort(), IDLE_MS);
+        }
+      }
+    } catch (e) {
+      rmSync(part, { force: true });
+      throw idle.signal.aborted ? new Error('download stopped: nothing arrived for two minutes') : e;
+    } finally { clearTimeout(timer); }
+    bytes = readFileSync(part);
+    if (!matches(bytes)) { rmSync(part, { force: true }); throw new Error('ACP_REGISTRY_CHECKSUM_MISMATCH'); }
+    renameSync(part, kept);
   }
   const staging = dir + '.staging';
   rmTree(staging);

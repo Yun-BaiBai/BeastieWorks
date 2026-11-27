@@ -339,3 +339,13 @@ test('agents already on the computer are named and listed before the rest, even 
   assert.equal(aaa.onComputer, undefined);
   assert.ok(r.rows.indexOf(codex) < r.rows.indexOf(aaa), 'the one on the computer comes first');
 });
+
+test('while an agent installs, the bytes on disk so far are counted for the progress line', t => {
+  const { installedBytes } = load('src/main/v8/acpRegistry.ts');
+  const dir = tmp(t), root = path.join(dir, 'agents');
+  assert.equal(installedBytes({ installRoot: root }, 'x'), 0, 'nothing yet');
+  fs.mkdirSync(path.join(root, 'x', '1.0.0', 'npm', 'node_modules', 'a'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'x', '1.0.0', 'npm', 'node_modules', 'a', 'f.js'), Buffer.alloc(1500));
+  fs.writeFileSync(path.join(root, 'x', '1.0.0', 'g.bin'), Buffer.alloc(500));
+  assert.equal(installedBytes({ installRoot: root }, 'x'), 2000);
+});

@@ -21,6 +21,19 @@ const ROLE: Record<RoleKey, { title: string; hint: string }> = {
  * computer plays each role, with its model and reasoning effort. Changeable later from the top bar. The model lists
  * are the agents' own (read by starting each one, no message sent).
  */
+/** The agents that have done real work (README, supported agents), in the order they are picked for a role. */
+const TRIED = ['codex-acp', 'claude-acp', 'antigravity-acp', 'dsh'];
+
+/**
+ * The agent a role gets before the person chooses: signed in first, then one that has done real work (老板 2026-11-28:
+ * review was given Gemini, which Google no longer serves to personal accounts). `not`: the worker, so review differs.
+ */
+export function pickAgent(rows: RosterRow[], not?: string): string | undefined {
+  const score = (r: RosterRow) => (r.signIn === 'yes' ? 0 : r.signIn === 'unknown' ? 10 : 20) + (TRIED.includes(r.id) ? TRIED.indexOf(r.id) : 5);
+  const ready = rows.filter(r => r.state === 'ready').sort((a, b) => score(a) - score(b));
+  return (ready.find(r => r.id !== not && r.signIn !== 'no') ?? ready[0])?.id;
+}
+
 export function SetupPage({ hero, first, onDone }: { hero: Hero; first: boolean; onDone(): void }) {
   const [rows, setRows] = useState<RosterRow[] | null>(null);
   const [v8, setV8] = useState<V8Settings | null>(null);
@@ -47,9 +60,7 @@ export function SetupPage({ hero, first, onDone }: { hero: Hero; first: boolean;
     void Promise.all([window.cth.getConfig(), window.cth.v8.agents()]).then(([c, view]) => {
       const s = (c.v8 ?? {}) as V8Settings;
       setUiLang(c.uiLanguage === 'zh' || c.uiLanguage === 'en' ? c.uiLanguage : 'system');
-      const ready = view.rows.filter(r => r.state === 'ready');
-      const signed = ready.filter(r => r.signIn !== 'no');
-      const pick = (not?: string) => (signed.find(r => r.id !== not) ?? signed[0] ?? ready[0])?.id;
+      const pick = (not?: string) => pickAgent(view.rows, not);
       setV8(s); setRows(view.rows);
       setName(s.leadName ?? tr('主理小怪'));
       setFolder(s.projectRoot ?? null);
@@ -131,8 +142,7 @@ export function SetupPage({ hero, first, onDone }: { hero: Hero; first: boolean;
         setRows(v.rows);
         // On first run the roles are picked again (signed-in agents first), so the ones just connected are used; later,
         // only roles still empty take them.
-        const ok = v.rows.filter(r => r.state === 'ready'), signed = ok.filter(r => r.signIn !== 'no');
-        const pick = (not?: string) => (signed.find(r => r.id !== not) ?? signed[0] ?? ok[0])?.id;
+        const pick = (not?: string) => pickAgent(v.rows, not);
         setRoles(old => {
           const keep = (r: V8AcpRole | null) => first ? null : r;
           const lead = keep(old.lead) ?? (pick() ? { agent: pick()! } : null), worker = keep(old.worker) ?? (pick() ? { agent: pick()! } : null);

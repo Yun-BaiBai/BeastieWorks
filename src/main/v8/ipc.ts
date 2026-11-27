@@ -10,7 +10,7 @@ import { WorkbenchHost } from './host';
 import { listProjects, projectKey } from './projects';
 import { AgentChats } from './agentChat';
 import { bundledAdapter, readRoster, type Roster } from './agentRoster';
-import { downloadSize, installAgent, loadRegistry, uninstallAgent } from './acpRegistry';
+import { downloadSize, installAgent, installedBytes, loadRegistry, uninstallAgent } from './acpRegistry';
 import { QUIRKS } from './acpQuirks';
 import { ClaudeLogin } from './claudeLogin';
 import { CodexLogin } from './codexLogin';
@@ -102,9 +102,11 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
   });
   // A5: the command-line tools behind those skills, installed into the app's own folder. Their folder goes on PATH
   // now, so every agent the app starts finds them (and node, npm and npx on a computer without Node.js).
-  const appNpm = join(__dirname, '..', '..', 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  // npm ships whole under resources/npm (老板 2026-11-28: packed inside the archive, its own modules were left out and
+  // no agent could be installed); while developing, the one in node_modules.
+  const appNpm = [join(process.resourcesPath ?? '', 'npm', 'bin', 'npm-cli.js'), join(__dirname, '..', '..', 'node_modules', 'npm', 'bin', 'npm-cli.js')].find(f => existsSync(f));
   const tools = new SkillTools({ dir: join(base, 'tools'), node: { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' } },
-    ...(existsSync(appNpm) ? { npmCli: outsideAsar(appNpm) } : {}) });
+    ...(appNpm ? { npmCli: outsideAsar(appNpm) } : {}) });
   try { tools.ensureBasics(); } catch { /* the folder could not be written: the tools stay as the computer has them */ }
   { const p = tools.pathWithTools(); process.env[p.key] = p.value; }
   const libView = () => ({ ...skills.view(), tools: tools.view() });
@@ -149,7 +151,7 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
       installRoot: process.env.BEASTIE_ACP_AGENTS || join(base, 'acp-agents'),
       node: { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' } },
       // npm ships inside the app (老板 2026-11-17, 问题 4), so agents install on a computer without Node.js.
-      ...(existsSync(join(appRoot, 'node_modules', 'npm', 'bin', 'npm-cli.js')) ? { npmCli: outsideAsar(join(appRoot, 'node_modules', 'npm', 'bin', 'npm-cli.js')) } : {}),
+      ...(appNpm ? { npmCli: outsideAsar(appNpm) } : {}),
     },
     bundled: bundledAdapter(appRoot),
     dataDir: base,
@@ -230,6 +232,7 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
     return agent;
   };
   const installing = new Set<string>();
+  const installStarted = new Map<string, number>();
   ipcMain.handle('v8:agentSize', async (_e, id: unknown) => {
     const size = await downloadSize(await listed(str(id)));
     const note = QUIRKS[str(id)]?.installNote?.(process.env) ?? null;
@@ -238,7 +241,7 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
   ipcMain.handle('v8:agentInstall', async (_e, id: unknown) => {
     const agent = await listed(str(id));
     if (installing.has(agent.id)) throw new Error(tr('正在装，等一下。'));
-    installing.add(agent.id);
+    installing.add(agent.id); installStarted.set(agent.id, Date.now());
     try {
       await chats!.close(agent.id);
       const args = QUIRKS[agent.id]?.installArgs;
@@ -247,6 +250,7 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
     const r = await readNow();
     return { rows: r.rows, source: r.source as RosterView['source'] };
   });
+  ipcMain.handle('v8:agentInstallProgress', (_e, id: unknown) => installing.has(str(id)) ? installedBytes(rosterDeps.registry, str(id), installStarted.get(str(id)) ?? 0) : null);
   ipcMain.handle('v8:agentUninstall', async (_e, id: unknown) => {
     const agentId = str(id);
     const s = deps.settings();

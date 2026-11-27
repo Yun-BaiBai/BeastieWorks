@@ -411,7 +411,6 @@
  "刺刺": "Spiky",
  "要从 {0} 下载，大小对方没说": "To be downloaded from {0}; size not given",
  "要从 {0} 下载约 {1}": "To be downloaded from {0}, about {1}",
- "要从 {0} 下载，主包约 {1}，加上它用到的其他包会更大": "To be downloaded from {0}: the main package is about {1}, more with the packages it uses",
  "{0}；{1}": "{0}; {1}",
  "没装成：": "Didn't install: ",
  "没卸成：": "Didn't uninstall: ",
@@ -947,5 +946,8 @@
  "下载并接上这 {0} 个": "Download and connect these {0}",
  "一键接上这 {0} 个": "Connect these {0}",
  "装好的 {0} 个；你电脑上还有 {1} 个没接上。名单上一共 {2} 个，看名单和额度都不花额度。": "{0} installed; {1} more on your computer not yet connected. {2} on the list; reading the list and quota costs nothing.",
- "电脑上有": "On this PC"
+ "电脑上有": "On this PC",
+ "要从 {0} 下载，主包约 {1}；连同它要用的其他包，实际可能大很多": "Downloads from {0}: about {1} for the main package; with the packages it needs it can be much larger",
+ "已下载约 {0}，用了 {1} 秒": "About {0} downloaded, {1} s so far",
+ "用了 {0} 秒": "{0} s so far"
 }

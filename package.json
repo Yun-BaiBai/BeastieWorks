@@ -1,7 +1,7 @@
 {
   "name": "beastie-works",
   "productName": "Beastie Works",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "小怪工坊：把本机的 AI agent 叫到一起，替你和朋友干活。",
   "main": "out/main/index.js",
@@ -21,15 +21,15 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "dist:win": "npm run build && node tools/prepare-magpie.cjs && node tools/prepare-git.cjs && electron-builder --win"
+    "dist:win": "npm run build && node tools/prepare-magpie.cjs && node tools/prepare-git.cjs && electron-builder --win && node tools/check-packaged.cjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^2.7.0",
     "better-sqlite3": "13.2.0",
-    "npm": "11.13.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "transcribe-cpp": "0.4.1"
+    "transcribe-cpp": "0.4.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.107.0",
@@ -42,6 +42,7 @@
     "electron": "43.8.7",
     "electron-builder": "26.15.3",
     "electron-vite": "^2.3.0",
+    "npm": "11.13.0",
     "typescript": "^5.6.3",
     "vite": "^5.4.8"
   },
