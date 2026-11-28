@@ -70,3 +70,15 @@ test('an npm agent installs with the npm that ships inside the app (no npm neede
   const calls = fs.readFileSync(path.join(paths.installRoot, 'pkg-acp', '3.1.0', 'npm', 'npm-calls.txt'), 'utf8');
   assert.match(calls, /^install --prefix .* --no-audit --no-fund --no-save --omit=optional @acme\/pkg-acp@3\.1\.0/);
 });
+
+test('an npm install cut off half way leaves nothing that counts as installed', async t => {
+  const { paths } = place(t);
+  const agent = { id: 'pkg-acp', name: 'Pkg', version: '3.1.0', distribution: { npx: { package: '@acme/pkg-acp@3.1.0' } } };
+  const dying = { ...paths, node: { ...paths.node, env: { ...paths.node.env, FAKE_NPM_DIE: '1' } } };
+  await assert.rejects(installAgent(dying, agent, fakeFetch(), KEY));
+  assert.equal(availability(paths, agent, KEY).state, 'not_installed', 'the half-written package is not taken for installed');
+  assert.ok(!fs.existsSync(path.join(paths.installRoot, 'pkg-acp', '3.1.0', 'npm.staging')), 'and it is cleaned away');
+  // Then a whole install works.
+  await installAgent(paths, agent, fakeFetch(), KEY);
+  assert.equal(availability(paths, agent, KEY).state, 'ready');
+});

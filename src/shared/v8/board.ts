@@ -106,6 +106,22 @@ export interface BoardData {
   chains: ChainView[];
   /** 拆解 (A12) being worked out or waiting for the boss. */
   splits: SplitView[];
+  /** A gremlin waiting for the boss to allow one of the boss's own connector tools (老板 2026-11-28). */
+  asks: ToolAsk[];
+}
+
+/** One connector tool a working gremlin asked to use, waiting for the boss. */
+export interface ToolAsk {
+  id: string;
+  ticketId: number;
+  title: string;
+  /** The connector, as people say it (Notion), and the tool (notion-fetch). */
+  server: string;
+  tool: string;
+  full: string;
+  /** Its name says it changes something (create, update, delete…). */
+  writes: boolean;
+  since: number;
 }
 
 /** One of the two plans the lead sorted the proposals into. */

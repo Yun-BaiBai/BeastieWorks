@@ -53,9 +53,13 @@ export function SlotPage({ d, now, hero, harness, onPoke, onStop, onWait, onMode
       <div className="v8p-bar"><i style={{ width: `${(s.step + .5) / WORK_STEPS.length * 100}%` }} /></div>
     </div>
     <div className="v8p-panel">
+      <div className="v8p-panelscroll">
       <span className="v8-cap">{s.slot.label}{s.slot.model ? ' · ' + s.slot.model : ''} · {s.phase === 'checking' ? tr('在验证') : tr('在干活')}</span>
-      <blockquote>{t.originalRequest}</blockquote>
+      {/* The ticket's title, then the original words a few lines at first (老板 2026-11-28: a long request in 38px type
+          covered the whole page). */}
+      <h2 className="v8p-slottitle">{t.title}</h2>
       <span className="v8-cap">{tr('你 ')}{hhmm(d.saidAt)} {tr(' 说的原话，一个字没改')}</span>
+      <Folded className="v8p-said" text={t.originalRequest} lines={2} />
       <ol className="v8p-steps">{WORK_STEPS.map((n, i) => <li key={n} className={i < s.step ? 'is-done' : i === s.step ? 'is-now' : ''}>{n}</li>)}</ol>
       <div className="v8p-cols">
         <div><span className="v8-cap">{tr('它在做什么')}</span>
@@ -70,6 +74,7 @@ export function SlotPage({ d, now, hero, harness, onPoke, onStop, onWait, onMode
           {d.question && <><span className="v8-cap v8p-gap">{tr('它问过你')}</span>
             <p className="v8p-qa">{d.question.text}{d.question.open && <em>{tr('还没回答')}</em>}</p></>}
         </div>
+      </div>
       </div>
       <Ask placeholder={tr('只对这只小怪插一句话，比如：别动工具栏的样式')} action={tr('插话')} onSend={onPoke}
         extra={<button type="button" className="v8p-stop" onClick={onStop}>{tr('叫停')}</button>} />
@@ -176,29 +181,70 @@ export function LeadPage({ data, hero, onSay, onAnswer, onOpenDelivery, onRetry,
 
 // ---------- 交付 ----------
 
+/** Long text shown a few lines at first, the rest a click away (老板 2026-11-28: the page was a wall of words). */
+function Folded({ text, lines, className }: { text: string; lines: number; className?: string }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > lines * 40;
+  return <div className={'v8p-fold' + (className ? ' ' + className : '')}>
+    <p style={open || !long ? undefined : { WebkitLineClamp: lines }} className={open || !long ? '' : 'is-cut'}>{text}</p>
+    {long && <button type="button" className="v8-quiet-btn" onClick={() => setOpen(o => !o)}>{open ? tr('收起') : tr('展开全文')}</button>}
+  </div>;
+}
+
+/** The diff split per file, as its header lines name them (workbench diff()). */
+function filesOfDiff(diff: string): Array<{ path: string; lines: string[] }> {
+  const out: Array<{ path: string; lines: string[] }> = [];
+  for (const l of diff.split('\n')) {
+    if (!l) continue;
+    if (!/^[+\- ]/.test(l)) { out.push({ path: l.trim(), lines: [] }); continue; }
+    if (!out.length) out.push({ path: '', lines: [] });
+    out[out.length - 1]!.lines.push(l);
+  }
+  return out;
+}
+
 export function DeliveryPage({ d, hero, onAccept, onReject, onReviewAgain }: { d: DeliveryDetail; hero: Hero; onAccept(): void; onReject(why: string): void; onReviewAgain?(): void }) {
   const [why, setWhy] = useState('');
+  const [openFile, setOpenFile] = useState<string | null>(null);
+  // What it did, said first: the summary's first sentence, the rest folded (老板 2026-11-28).
+  const cut = d.summary.search(/[。！？!?]|\.(\s|$)/);
+  const head = cut > 0 && cut < 160 ? d.summary.slice(0, cut + 1) : d.summary.slice(0, 120);
+  const rest = d.summary.slice(head.length).trim();
+  const perFile = filesOfDiff(d.diff);
+  const diffOf = (path: string) => perFile.find(f => f.path && (f.path === path || f.path.endsWith(path) || path.endsWith(f.path)))?.lines ?? null;
+  // Counts from the diff when the live count is gone (after a restart).
+  const counted = (f: { path: string; plus: number; minus: number }) => { const l = f.plus + f.minus ? null : diffOf(f.path); return l ? { ...f, plus: l.filter(x => x.startsWith('+')).length, minus: l.filter(x => x.startsWith('-')).length } : f; };
+  const files = d.files.length ? d.files.map(counted) : perFile.filter(f => f.path).map(f => ({ path: f.path, plus: f.lines.filter(l => l.startsWith('+')).length, minus: f.lines.filter(l => l.startsWith('-')).length }));
   return <section className="v8p v8p-out" aria-label={tr('交付 · ') + d.title}>
     <div className="v8p-parcel">
       <img className="v8-g v8p-hero" style={hero} src={art('alien', 'reporting')} alt="" />
       {d.reviewPassed && <div className="v8p-stamp"><img className="v8-g" src={art('lanky', 'approve')} alt="" />{tr('审查通过')}</div>}
       {!d.reviewPassed && d.reviewNote && <img className="v8-g v8p-stampg" src={art('lanky', 'unimpressed')} alt="" />}
       {/* Shown with a pass too: a same-company review is no second opinion (1.0 review, finding 12). */}
-      {d.reviewNote && <p className="v8p-reviewnote" role="note">{d.reviewNote}</p>}
+      {d.reviewNote && <><span className="v8-cap">{d.reviewPassed ? tr('审查提醒') : tr('审查没通过，交给你定')}</span><Folded className="v8p-reviewnote" text={d.reviewNote} lines={3} /></>}
       {!d.reviewPassed && d.reviewNote?.startsWith(tr('审查没给结论')) && onReviewAgain && <button type="button" className="v8-back" onClick={onReviewAgain}>{tr('重新审一次')}</button>}
       <span className="v8-cap">{tr('你的原话')}</span>
-      <blockquote className="is-small">{d.originalRequest}</blockquote>
+      <Folded className="v8p-said" text={d.originalRequest} lines={3} />
       <ul className="v8p-facts"><li><b>{d.files.length}</b>{tr('个文件')}</li><li><b>{clock(d.elapsedMs)}</b>{tr('用时')}</li><li><b>{moneyText(d.costUsd, d.costSure)}</b>{tr('花费')}</li></ul>
     </div>
     <div className="v8p-proof">
-      {d.shots
-        ? <div className="v8p-shots"><figure><figcaption className="v8-cap">{tr('改之前')}</figcaption><img src={d.shots.before} alt={tr('改之前的截图')} /></figure>
-          <figure><figcaption className="v8-cap">{tr('改之后')}</figcaption><img src={d.shots.after} alt={tr('改之后的截图')} /></figure></div>
-        : <p className="v8p-summary">{d.summary}</p>}
-      <span className="v8-cap">{tr('改了什么')}</span>
-      {d.diff.trim() ? <pre className="v8p-diff">{d.diff.split('\n').map((l, i) => <i key={i} className={l.startsWith('+') ? 'is-plus' : l.startsWith('-') ? 'is-minus' : 'is-file'}>{l}</i>)}</pre>
-        : <p className="v8p-qa">{tr('工作目录里没有改动。')}{d.files.length ? tr('它说动过：') + d.files.map(f => f.path).join(tr('、')) + tr('。') : ''}</p>}
-      <div className="v8p-verify"><span className="v8-cap">{tr('它怎么验证的')}</span><code>{d.verification.command} · {d.verification.output}</code></div>
+      <div className="v8p-proofscroll">
+        <span className="v8-cap">{tr('它做了什么')}</span>
+        <p className="v8p-head">{head}</p>
+        {rest && <Folded className="v8p-rest" text={rest} lines={2} />}
+        {d.shots && <div className="v8p-shots"><figure><figcaption className="v8-cap">{tr('改之前')}</figcaption><img src={d.shots.before} alt={tr('改之前的截图')} /></figure>
+          <figure><figcaption className="v8-cap">{tr('改之后')}</figcaption><img src={d.shots.after} alt={tr('改之后的截图')} /></figure></div>}
+        <span className="v8-cap v8p-gap">{tr('改了哪些文件（{0} 个，点开看改动）', [files.length])}</span>
+        {files.length ? <ul className="v8p-files">{files.map(f => {
+          const lines = diffOf(f.path), open = openFile === f.path;
+          return <li key={f.path} className={open ? 'is-open' : ''}>
+            <button type="button" onClick={() => setOpenFile(open ? null : f.path)} aria-expanded={open}>
+              <span className="v8p-fname">{f.path}</span><em className="is-plus">+{f.plus}</em><em className="is-minus">−{f.minus}</em><i>{open ? '▾' : '▸'}</i></button>
+            {open && <pre className="v8p-diff">{(lines ?? [tr('这个文件的改动没在这里显示。')]).map((l, i) => <i key={i} className={l.startsWith('+') ? 'is-plus' : l.startsWith('-') ? 'is-minus' : ''}>{l}</i>)}</pre>}
+          </li>;
+        })}</ul> : <p className="v8p-qa">{tr('工作目录里没有改动。')}</p>}
+        <details className="v8p-verify"><summary className="v8-cap">{tr('它怎么验证的（点开看）')}</summary><code>{d.verification.command}</code><code className="is-out">{d.verification.output}</code></details>
+      </div>
       <div className="v8p-decide">
         <button type="button" className="v8p-accept" onClick={onAccept}>{tr('收下，这张完成')}</button>
         <input value={why} onChange={e => setWhy(e.target.value)} placeholder={tr('不满意就写一句原因，再点打回')} aria-label={tr('打回的原因')} />

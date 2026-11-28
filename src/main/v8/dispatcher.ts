@@ -16,8 +16,8 @@ export interface ApprovalRequest { ticketId: number; tool: string; detail: strin
 export interface DispatcherOptions {
   /** The ticket's own working directory (a git worktree from B3 on). */
   workdir(ticketId: number): string | Promise<string>;
-  /** Spec section 6. Until B3 brings the directory rule, the default refuses everything. */
-  approve?(request: ApprovalRequest): boolean;
+  /** True or false now, or a promise when the boss is asked first (a connector tool). */
+  approve?(request: ApprovalRequest): boolean | Promise<boolean>;
   /** The skill library (第 6 步): a gremlin's brief names the skills that fit, and it can list and fetch them. */
   /** A10: the project's notebook, under the boss's words. */
   notes?: { briefLines(): string[] };
@@ -247,9 +247,13 @@ export class Dispatcher {
         // The app's own tools are always allowed: calling one is asking the scheduler, which checks the arguments.
         // (omp asks before a host tool when it is first-class; refusing our own report tool would strand the work.)
         const own = e.tool === REPORT_TOOL.name;
-        const allowed = own || (!l.reported && (this.options.approve?.({ ticketId: l.ticketId, tool: e.tool, detail: e.detail }) ?? false));
-        l.session.respondApproval(e.id, allowed);
-        this.emit({ type: 'approval', ticketId: l.ticketId, tool: e.tool, detail: e.detail, allowed });
+        const verdict = own ? true : l.reported ? false : (this.options.approve?.({ ticketId: l.ticketId, tool: e.tool, detail: e.detail }) ?? false);
+        const settle = (allowed: boolean) => {
+          l.session.respondApproval(e.id, allowed);
+          this.emit({ type: 'approval', ticketId: l.ticketId, tool: e.tool, detail: e.detail, allowed });
+        };
+        if (typeof verdict === 'boolean') settle(verdict);
+        else void verdict.then(settle, () => settle(false));
         return;
       }
       case 'host_tool': {

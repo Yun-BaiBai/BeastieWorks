@@ -61,6 +61,20 @@ export interface DirectoryPolicyOptions {
   protectedFiles?(ticketId: number): string[];
 }
 
+/**
+ * A tool from one of the person's own connectors (Notion, Gmail…): `mcp__<server>__<tool>` as Claude Code names it.
+ * The rule never allows these by itself; the boss is asked (老板 2026-11-28, as T3 Code: allow once, for the ticket,
+ * or not). `writes`: the name says it changes something, so the question says so.
+ */
+export function connectorOf(detail: string): { full: string; server: string; tool: string; writes: boolean } | null {
+  const full = /^Connector:\s*(mcp__\S+)$/m.exec(detail)?.[1];
+  if (!full) return null;
+  const rest = full.slice(5), cut = rest.indexOf('__');
+  if (cut <= 0) return null;
+  const server = rest.slice(0, cut).replace(/^claude_ai_/, '').replace(/_/g, ' '), tool = rest.slice(cut + 2);
+  return { full, server, tool, writes: /create|update|delete|remove|move|send|post|write|upload|edit|archive|duplicate|comment|set[-_]/i.test(tool) };
+}
+
 export function directoryPolicy(o: DirectoryPolicyOptions): (r: ApprovalRequest) => boolean {
   return r => {
     const dir = o.workdir(r.ticketId);

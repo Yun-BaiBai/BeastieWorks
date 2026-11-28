@@ -260,3 +260,25 @@ test('the lead may use its own tools when omp asks, and nothing else', async t =
   const leadSession = f.shell.sessions.find(x => x.spec.role === 'lead');
   assert.deepEqual(leadSession.leadAsked, [true, false]);
 });
+
+test('the policy may wait for the boss: the gremlin waits, then gets the answer (a connector tool)', async t => {
+  let answer;
+  const g = await fixture(t, { approve: r => r.detail === 'python test_calc.py' ? new Promise(res => { answer = res; }) : false });
+  g.l.bossSays('要命令跑测试');
+  await until(() => typeof answer === 'function', 'the question to the boss');
+  assert.equal(g.s.tickets()[0].state, 'WORKING', 'the gremlin waits meanwhile');
+  answer(true);
+  await until(() => g.s.tickets()[0]?.state === 'REVIEW', 'the allowed run');
+  assert.ok(g.activity.some(a => a.type === 'approval' && a.allowed === true && a.detail === 'python test_calc.py'));
+});
+
+test('a connector tool is named in the permission detail and recognised; the rule alone never allows it', () => {
+  const { describePermission } = load('src/main/v8/acpShell.ts');
+  const { connectorOf, directoryPolicy } = load('src/main/v8/approval.ts');
+  const d = describePermission({ title: 'notion-fetch', kind: 'other', rawInput: { id: 'x' }, _meta: { claudeCode: { toolName: 'mcp__claude_ai_Notion__notion-fetch' } } });
+  assert.match(d.detail, /^Connector: mcp__claude_ai_Notion__notion-fetch$/m);
+  assert.deepEqual(connectorOf(d.detail), { full: 'mcp__claude_ai_Notion__notion-fetch', server: 'Notion', tool: 'notion-fetch', writes: false });
+  assert.equal(connectorOf(describePermission({ title: 'x', _meta: { claudeCode: { toolName: 'mcp__claude_ai_Notion__notion-update-page' } } }).detail).writes, true);
+  assert.equal(connectorOf(describePermission({ title: 'Read a.txt', kind: 'read' }).detail), null);
+  assert.equal(directoryPolicy({ workdir: () => 'D:/w' })({ ticketId: 1, tool: d.tool, detail: d.detail }), false);
+});

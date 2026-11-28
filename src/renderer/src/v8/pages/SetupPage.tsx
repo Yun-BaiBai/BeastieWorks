@@ -5,6 +5,7 @@ import type { RosterRow, SessionChoices } from '@shared/v8/agents';
 import type { V8AcpRole, V8Settings } from '@shared/v8/settings';
 import { art } from '../gremlins';
 import { ConnectAll } from '../InstallBox';
+import { SignInBox } from './AgentsPage';
 import { setThemeChoice, useThemeChoice, type ThemeChoice } from '../../design/theme';
 import type { Hero } from './Pages';
 
@@ -80,11 +81,12 @@ export function SetupPage({ hero, first, onDone }: { hero: Hero; first: boolean;
   const picked = [...new Set(Object.values(roles).filter((r): r is V8AcpRole => !!r).map(r => r.agent))];
   useEffect(() => {
     for (const id of picked) {
-      if (offered[id] !== undefined) continue;
+      // Not signed in: nothing to ask yet; the role shows how to sign in instead (老板 2026-11-28: "Internal error").
+      if (offered[id] !== undefined || rows?.find(r => r.id === id)?.signIn === 'no') continue;
       setOffered(o => ({ ...o, [id]: '' }));
       window.cth.v8.agentChoices(id).then(c => setOffered(o => ({ ...o, [id]: c })), e => setOffered(o => ({ ...o, [id]: why(e) })));
     }
-  }, [picked.join(',')]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [picked.join(','), rows]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const ready = (rows ?? []).filter(r => r.state === 'ready');
   const set = (k: RoleKey, r: V8AcpRole | null) => setRoles(old => ({ ...old, [k]: r }));
@@ -109,7 +111,11 @@ export function SetupPage({ hero, first, onDone }: { hero: Hero; first: boolean;
     const r = roles[k];
     const o = r ? offered[r.agent] : undefined;
     const choices = typeof o === 'object' ? o : null;
-    return <div key={k} className="v8u-role">
+    const row = r ? rows?.find(x => x.id === r.agent) : undefined;
+    const out = row?.signIn === 'no';
+    // After signing in, read the list again and ask this agent for its models afresh.
+    const signedIn = () => { void window.cth.v8.agents().then(v => { setRows(v.rows); setOffered(old => { const n = { ...old }; delete n[row!.id]; return n; }); }); };
+    return <div key={k} className="v8u-role-wrap"><div className="v8u-role">
       <div><b>{k === 'lead' ? tr('{0}（{1}）', [ROLE.lead.title, name.trim() || tr('主理小怪')]) : ROLE[k].title}</b><small>{ROLE[k].hint}</small></div>
       <label className="v8a-select"><span className="v8-cap">{tr('用哪个 agent')}</span>
         <select value={r?.agent ?? ''} onChange={e => set(k, e.target.value ? { agent: e.target.value } : null)}>
@@ -127,7 +133,10 @@ export function SetupPage({ hero, first, onDone }: { hero: Hero; first: boolean;
           {choices.effort.choices.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
         </select></label>}
       {r && o === '' && <small className="v8m-sub">{tr('正在问它有哪些模型（不花额度）…')}</small>}
-      {typeof o === 'string' && o && <small className="v8a-problem">{tr('没读到它的模型：')}{o}</small>}
+      {typeof o === 'string' && o && <small className="v8a-problem">{tr('没读到它的模型（{0}）。多半是还没登录：到"agent 名单"里跟它说一句看看。', [o])}</small>}
+      {out && !row!.canSignIn && <small className="v8a-problem">{row!.note}</small>}
+    </div>
+    {out && row!.canSignIn && <SignInBox id={row!.id} name={row!.name} onDone={signedIn} />}
     </div>;
   };
 

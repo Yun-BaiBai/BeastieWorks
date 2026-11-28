@@ -374,7 +374,7 @@ export class TicketWorkspaces {
       }
       // Make new files visible to `git diff` without staging their content.
       execFileSync('git', ['-C', dir, 'add', '-A', '--intent-to-add', '--', '.', ...artifactSpecs, ...artifactFiles], { windowsHide: true, stdio: 'ignore' });
-      const out = execFileSync('git', ['-C', dir, 'diff', this.base(ticketId) ?? 'HEAD', '--no-color', '--unified=' + (o.context ?? 3), '--', '.', ...artifactSpecs, ...artifactFiles, ...skip],
+      const out = execFileSync('git', ['-C', dir, '-c', 'core.quotepath=false', 'diff', this.base(ticketId) ?? 'HEAD', '--no-color', '--unified=' + (o.context ?? 3), '--', '.', ...artifactSpecs, ...artifactFiles, ...skip],
         { windowsHide: true, maxBuffer: 8 << 20 }).toString();
       const text = (bigLines.length ? bigLines.join('\n') + '\n\n' : '') + out;
       return text.length > max ? text.slice(0, max) + tr('\n…（改动太长，后面省略）') : text;

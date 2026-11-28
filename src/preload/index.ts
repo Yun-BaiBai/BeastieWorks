@@ -74,6 +74,8 @@ const api = {
     waitForQuota: (id: number): Promise<{ resetsAt: number | null }> => ipcRenderer.invoke('v8:waitForQuota', id),
     agentQuota: (id: string, fresh?: boolean): Promise<import('../shared/v8/agents').AgentQuota> => ipcRenderer.invoke('v8:agentQuota', id, fresh === true),
     front: (id: number): Promise<number> => ipcRenderer.invoke('v8:front', id),
+    /** The boss's answer to a gremlin asking for a connector tool. */
+    answerAsk: (id: string, how: 'once' | 'ticket' | 'no'): Promise<void> => ipcRenderer.invoke('v8:answerAsk', id, how),
     agents: (): Promise<import('../shared/v8/agents').RosterView> => ipcRenderer.invoke('v8:agents'),
     agentSay: (id: string, text: string): Promise<import('../shared/v8/agents').ChatTurn> => ipcRenderer.invoke('v8:agentSay', id, text),
     agentChoices: (id: string): Promise<import('../shared/v8/agents').SessionChoices> => ipcRenderer.invoke('v8:agentChoices', id),

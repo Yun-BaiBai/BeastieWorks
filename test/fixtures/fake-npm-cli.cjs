@@ -12,3 +12,5 @@ fs.mkdirSync(path.join(dir, 'dist'), { recursive: true });
 fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name, version, bin: { agent: 'dist/index.js' } }));
 fs.writeFileSync(path.join(dir, 'dist', 'index.js'), '// fake agent\n');
 fs.appendFileSync(path.join(prefix, 'npm-calls.txt'), args.join(' ') + '\n');
+// FAKE_NPM_DIE: the package is written, then npm stops half way (the app closed, the power went).
+if (process.env.FAKE_NPM_DIE) process.exit(1);

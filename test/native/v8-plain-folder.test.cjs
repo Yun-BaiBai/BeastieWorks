@@ -38,6 +38,8 @@ for (const git of [false, true]) {
     fs.rmSync(path.join(dir, '大纲.txt'));
     assert.equal(fs.readFileSync(path.join(project, '章节', '第一章.md'), 'utf8'), '天亮了。\r\n');
     assert.match(spaces.diff(1), /她出门了/);
+    // File names stay as written, not git's octal escapes (老板 2026-11-28: the delivery page could not match them).
+    assert.match(spaces.diff(1), /^\+\+\+ b\/章节\/第二章\.md$/m);
     const r = spaces.apply(1);
     assert.deepEqual(r.conflicts, []);
     assert.deepEqual(r.applied.sort(), ['大纲.txt', '章节/第一章.md', '章节/第二章.md'].sort());

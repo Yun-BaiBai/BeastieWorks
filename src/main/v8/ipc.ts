@@ -143,6 +143,7 @@ export function registerV8Ipc(ipcMain: IpcMain, deps: { userData: string; settin
   ipcMain.handle('v8:waitForQuota', async (_e, id: unknown) => (await get()).waitForQuota(num(id)));
   ipcMain.handle('v8:agentQuota', (_e, id: unknown, fresh: unknown) => quotas.read(str(id), fresh === true));
   ipcMain.handle('v8:front', async (_e, id: unknown) => (await get()).front(num(id)));
+  ipcMain.handle('v8:answerAsk', async (_e, id: unknown, how: unknown) => (await get()).answerAsk(str(id), how === 'once' || how === 'ticket' ? how : 'no'));
   // The agent roster and a plain chat with one agent. Reading the roster sends nothing; a chat message is a real message.
   const appRoot = join(__dirname, '..', '..');
   const rosterDeps = {

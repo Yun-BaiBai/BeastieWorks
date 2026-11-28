@@ -5,7 +5,7 @@ import { basename, join } from 'node:path';
 import Database from 'better-sqlite3';
 import { sureOf } from '../../shared/v8/board';
 import type { CostBasis } from './shell';
-import type { BoardData, BoardSlot, DeliveryDetail, FeedLine, FileChange, RingMark, SlotDetail, TalkLine, WorkLogLine } from '../../shared/v8/board';
+import type { BoardData, BoardSlot, DeliveryDetail, FeedLine, FileChange, RingMark, SlotDetail, TalkLine, ToolAsk, WorkLogLine } from '../../shared/v8/board';
 import type { DoneReport, SlotConfig, TicketView, V8Message } from '../../shared/v8/tickets';
 import type { V8Desk, V8QuotaRule, V8Settings } from '../../shared/v8/settings';
 import { MAX_BACKUPS, deskLabel, desksOf, nextBackup, planOf } from '../../shared/v8/desks';
@@ -15,7 +15,7 @@ import { Lead } from './lead';
 import type { AgentShell } from './shell';
 import { FakeShell } from './fakeShell';
 import { TicketWorkspaces } from './workspace';
-import { directoryPolicy } from './approval';
+import { connectorOf, directoryPolicy } from './approval';
 import { demoScripts } from './demoScripts';
 import { REPORT_TOOL } from './prompts';
 import { Reviewer } from './reviewer';
@@ -80,6 +80,8 @@ interface SlotLive { ticketId: number; startedAt: number; live: string | null; p
 interface TicketLive { log: WorkLogLine[]; files: Map<string, FileChange>; cost: number; bases: Set<CostBasis>; startedAt: number | null; elapsedMs: number }
 
 const MAX_LOG = 40, MAX_FEED = 40;
+/** How long a connector question waits for the boss before it counts as no. */
+const ASK_WAIT_MS = 10 * 60 * 1000;
 const startOfDay = (t: number) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
 /** At most this many gremlins at once (plus the emergency slot). */
 export const MAX_SLOTS = 8;
@@ -135,6 +137,9 @@ export class V8Workbench {
   private spentBases = new Set<CostBasis>();
   private listeners = new Set<() => void>();
   private seq = 0;
+  /** Connector tools waiting for the boss's yes or no (老板 2026-11-28), and those allowed for a whole ticket. */
+  private readonly asks = new Map<string, { view: ToolAsk; settle(ok: boolean): void }>();
+  private readonly allowedTools = new Map<number, Set<string>>();
 
   constructor(private readonly o: WorkbenchOptions) {
     this.now = o.clock ?? Date.now;
@@ -169,7 +174,10 @@ export class V8Workbench {
     this.notes = new ProjectNotes(join(o.stateDir, 'notes.json'), this.now);
     this.dispatcher = new Dispatcher(this.scheduler, shell, {
       workdir: id => this.spaces.ensure(id),
-      approve: directoryPolicy({ workdir: id => this.spaces.path(id), protectedFiles: id => this.spaces.big(id).filter(b => b.linked).map(b => b.path), hostTools: [REPORT_TOOL.name, ...(o.skills ? SKILL_TOOLS.map(t => t.name) : [])] }),
+      approve: (() => {
+        const rule = directoryPolicy({ workdir: id => this.spaces.path(id), protectedFiles: id => this.spaces.big(id).filter(b => b.linked).map(b => b.path), hostTools: [REPORT_TOOL.name, ...(o.skills ? SKILL_TOOLS.map(t => t.name) : [])] });
+        return (r: { ticketId: number; tool: string; detail: string }) => rule(r) || this.askBoss(r.ticketId, r.detail);
+      })(),
       clock: this.now, ...(o.probe ? { probe: o.probe } : {}),
       notes: { briefLines: () => this.notes.briefLines() },
       ...(o.skills ? { skills: { briefLines: (about: string, slotId?: string) => o.skills!.briefLines(about, this.ranAt(slotId)?.skillsOff ?? []), call: (n: string, a: unknown, slotId?: string) => o.skills!.call(n, a, this.ranAt(slotId)?.skillsOff ?? []), tools: SKILL_TOOLS } } : {}),
@@ -601,6 +609,40 @@ export class V8Workbench {
   /** The boss moves a queued ticket to the front (排队页「提到最前」). */
   front(ticketId: number): number { const at = this.scheduler.moveToFront(ticketId); this.changed(); return at; }
 
+  /**
+   * A gremlin wants one of the boss's own connector tools (Notion…). The rule never allows these; the boss is asked,
+   * as T3 Code asks (accept, accept for the session, decline). No answer in ten minutes is a no.
+   */
+  private askBoss(ticketId: number, detail: string): boolean | Promise<boolean> {
+    const c = connectorOf(detail);
+    if (!c) return false;
+    if (this.allowedTools.get(ticketId)?.has(c.full)) return true;
+    return new Promise(resolve => {
+      const id = 'k' + ++this.seq;
+      let title = tr('工单 #') + ticketId;
+      try { title = this.scheduler.ticket(ticketId).title; } catch { /* keep the number */ }
+      const timer = setTimeout(() => finish(false), ASK_WAIT_MS);
+      const finish = (ok: boolean) => { clearTimeout(timer); if (this.asks.delete(id)) { resolve(ok); this.changed(); } };
+      this.asks.set(id, { view: { id, ticketId, title, server: c.server, tool: c.tool, full: c.full, writes: c.writes, since: this.now() }, settle: finish });
+      this.changed();
+    });
+  }
+
+  /** The boss's answer: once, for the rest of this ticket, or no. */
+  answerAsk(id: string, how: 'once' | 'ticket' | 'no'): void {
+    const a = this.asks.get(id);
+    if (!a) return;
+    if (how === 'ticket') { const s = this.allowedTools.get(a.view.ticketId) ?? new Set<string>(); s.add(a.view.full); this.allowedTools.set(a.view.ticketId, s); }
+    a.settle(how !== 'no');
+  }
+
+  /** Questions still open, for the screens; those whose ticket stopped working are answered no. */
+  private openAsks(): ToolAsk[] {
+    const working = new Set(this.scheduler.tickets().filter(t => t.state === 'WORKING').map(t => t.id));
+    for (const a of [...this.asks.values()]) if (!working.has(a.view.ticketId)) a.settle(false);
+    return [...this.asks.values()].map(a => a.view);
+  }
+
   // ---------- what the screens show ----------
 
   board(): BoardData {
@@ -643,6 +685,7 @@ export class V8Workbench {
       roundtables: this.roundtable?.views() ?? [],
       chains: this.chains.views(),
       splits: this.splits?.views() ?? [],
+      asks: this.openAsks(),
     };
   }
 
@@ -679,8 +722,23 @@ export class V8Workbench {
       files: done ? done.changed.map(p => t?.files.get(p) ?? { path: p, plus: 0, minus: 0 }) : [],
       diff: done ? this.diff(ticketId) : '',
       verification: done ? done.verification : { command: '', output: '' },
-      elapsedMs: t?.elapsedMs ?? 0, costUsd: t?.cost ?? 0, costSure: sureOf(t?.bases ?? []), ...this.reviewOf(ticketId), shots: null,
+      // After a restart nothing is live: the time from its runs and the money written down for it (老板 2026-11-28: the
+      // page said 00:00 and $0 for a ticket that had cost $1.72).
+      elapsedMs: t?.elapsedMs ?? this.ranFor(ticketId), costUsd: t?.cost ?? this.keptCost(ticketId), costSure: t ? sureOf(t.bases) : 'partial', ...this.reviewOf(ticketId), shots: null,
     };
+  }
+
+  /** How long a ticket's runs took, from the assignments table. */
+  private ranFor(ticketId: number): number {
+    try {
+      const r = this.db.prepare('SELECT COALESCE(SUM(ended_at - started_at), 0) AS ms FROM v8_assignments WHERE ticket_id=? AND started_at IS NOT NULL AND ended_at IS NOT NULL').get(ticketId) as { ms: number } | undefined;
+      return r?.ms ?? 0;
+    } catch { return 0; }
+  }
+
+  /** What a ticket has spent, as written down (v8_ticket_spend). */
+  private keptCost(ticketId: number): number {
+    try { return (this.db.prepare('SELECT cost FROM v8_ticket_spend WHERE ticket_id=?').get(ticketId) as { cost: number } | undefined)?.cost ?? 0; } catch { return 0; }
   }
 
   /** Money spent outside tickets: chatting with an agent on the roster page, or having it retell a skill. */

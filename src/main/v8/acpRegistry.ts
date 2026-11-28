@@ -239,10 +239,21 @@ async function installBinary(dir: string, target: BinaryTarget, fetchImpl: typeo
 }
 
 async function installPackage(p: RegistryPaths, dir: string, target: PackageTarget, extraArgs: string[]): Promise<void> {
-  mkdirSync(dir, { recursive: true });
-  const args = ['install', '--prefix', dir, '--no-audit', '--no-fund', '--no-save', ...extraArgs, target.package];
-  if (p.npmCli) await run(p.node.command, [p.npmCli, ...args], dir, p.node.env);
-  else await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, dir);
+  // Into a folder beside it first, moved into place only once npm has finished (老板 2026-11-28: an install cut off
+  // halfway, by closing the app, left a half-written Claude program that the roster took for installed).
+  const staging = dir + '.staging';
+  rmTree(staging);
+  mkdirSync(staging, { recursive: true });
+  const args = ['install', '--prefix', staging, '--no-audit', '--no-fund', '--no-save', ...extraArgs, target.package];
+  try {
+    if (p.npmCli) await run(p.node.command, [p.npmCli, ...args], staging, p.node.env);
+    else await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, staging);
+  } catch (e) { rmTree(staging); throw e; }
+  rmTree(dir);
+  // A virus scanner may hold a fresh file for a moment; try the move a few times.
+  for (let i = 0; ; i++) {
+    try { renameSync(staging, dir); return; } catch (e) { if (i >= 9) throw e; await new Promise(r => setTimeout(r, 500)); }
+  }
 }
 
 /**

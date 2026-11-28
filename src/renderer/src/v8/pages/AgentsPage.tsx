@@ -149,7 +149,7 @@ function Pick({ label, list, disabled, onChange }: { label: string; list: Choice
  * Signing in to an agent from the roster. The agent's own program shows its maker's sign-in page (and usually opens
  * the browser by itself); the person signs in there. If the page then shows a code, it is pasted here.
  */
-function SignInBox({ id, name, onDone }: { id: string; name: string; onDone(): void }) {
+export function SignInBox({ id, name, onDone }: { id: string; name: string; onDone(): void }) {
   const [flow, setFlow] = useState<SignInFlow | null>(null);
   const [starting, setStarting] = useState(false);
   const [code, setCode] = useState('');

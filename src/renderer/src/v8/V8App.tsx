@@ -9,6 +9,7 @@ import { Canvas } from './Canvas';
 import { TopBar } from './TopBar';
 import { ProjectSwitcher } from './ProjectSwitcher';
 import { Board } from './board/Board';
+import { AskBox } from './AskBox';
 import { DeliveryPage, LeadPage, QueuePage, ReviewPage, SlotPage, useNow } from './pages/Pages';
 import { ArchivePage, CrewPage, LedgerPage, TimelinePage } from './pages/MorePages';
 import { AgentsPage } from './pages/AgentsPage';
@@ -162,6 +163,7 @@ export function V8App() {
           onSkills={view.kind === 'skills' ? undefined : () => go({ kind: 'skills' }, null)}
           onSetup={view.kind === 'setup' || (firstRun && view.kind === 'board') ? undefined : () => go({ kind: 'setup' }, null)}
           projectSlot={<ProjectSwitcher name={data.project} working={stats.working} onSwitched={() => { setView({ kind: 'board' }); w.refresh(); }} />} />
+        <AskBox asks={data.asks ?? []} />
         {w.notice ? <div className="v8-notice" role="status">{w.notice}</div>
           : w.error && <div className="v8-notice" role="status">{tr('连不上工作台，看到的是 ')}{lostAt.current} {tr(' 的样子，正在重试。')}{explain(w.error).slice(leadLength(explain(w.error)))}</div>}
       </Canvas>

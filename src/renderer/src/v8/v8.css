@@ -104,3 +104,10 @@
 button.v8-stat { text-align: left; color: var(--ink); font: inherit; transition: transform .12s ease; }
 button.v8-stat:hover { transform: translateY(-2px); border-color: var(--edge); }
 button.v8-stat.is-hot { color: #15120f; }
+/* A gremlin asking for one of the boss's connector tools (AskBox.tsx): over every page, bottom right. */
+.v8-asks { position: absolute; right: 24px; bottom: 24px; z-index: 12; display: flex; flex-direction: column; gap: 10px; width: 420px; max-width: calc(100% - 48px); }
+.v8-ask { background: var(--paper); border: 2.5px solid var(--edge); border-radius: 14px; box-shadow: 4px 4px 0 var(--amber); padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; animation: v8-slide .25s ease; }
+.v8-ask p { margin: 0; font: 600 14px/1.45 var(--text); color: var(--ink); }
+.v8-ask code { font: 700 13px var(--mono); background: var(--paper2); border-radius: 6px; padding: 1px 6px; }
+.v8-ask small { font: 500 12px/1.45 var(--text); color: var(--ink2); }
+.v8-ask-acts { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }

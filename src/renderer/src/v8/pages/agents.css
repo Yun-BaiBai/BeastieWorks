@@ -149,3 +149,4 @@
 .v8a-found { margin-bottom: 10px; }
 .v8a-sizes { margin: 6px 0 10px; padding-left: 18px; font-size: 12.5px; color: var(--ink2); }
 .v8a-progress { display: block; margin-top: 8px; font: 600 12px/1.4 var(--mono); color: var(--ink2); }
+.v8u-role-wrap { display: flex; flex-direction: column; gap: 8px; }

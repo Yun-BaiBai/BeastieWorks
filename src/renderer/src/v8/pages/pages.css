@@ -145,3 +145,44 @@
 .v8p-turn p.v8p-plan { font-size: 16px; white-space: pre-wrap; }
 .v8p-plan em { margin-left: 8px; font: 600 13px/1 var(--text); font-style: normal; color: var(--ink3); }
 .v8p-wall.is-all { overflow-y: auto; }
+
+/* 交付, laid out again (老板 2026-11-28): what it did first, files one line each, details a click away. */
+.v8p-out .v8p-parcel { top: 96px; bottom: 34px; overflow-y: auto; padding-right: 8px; }
+.v8p-out .v8p-parcel .v8p-hero { height: 210px; }
+.v8p-out .v8p-stamp { top: 120px; }
+.v8 .v8p-out .v8p-stampg { top: 100px; }
+.v8p-out .v8p-parcel .v8-cap { margin-top: 18px; }
+.v8p-fold p { margin: 6px 0 0; white-space: pre-wrap; }
+.v8p-fold p.is-cut { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+.v8p-fold .v8-quiet-btn { margin-top: 6px; }
+.v8p-said p { font: 700 16px/1.55 var(--text); padding-left: 12px; border-left: 5px solid var(--amber); }
+.v8p-out .v8p-reviewnote { margin-top: 6px; }
+.v8p-out .v8p-reviewnote p { margin: 0; }
+.v8p-out .v8p-facts { margin-top: 18px; }
+.v8p-out .v8p-proof { top: 96px; }
+.v8p-proofscroll { position: absolute; left: 0; right: 0; top: 0; bottom: 84px; overflow-y: auto; padding-right: 10px; }
+.v8p-head { font: 800 21px/1.5 var(--text); color: var(--ink); margin: 8px 0 0; }
+.v8p-rest p { font: 500 15px/1.6 var(--text); color: var(--ink2); }
+.v8p-gap { display: block; margin-top: 22px; }
+.v8p-files { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.v8p-files li > button { width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; padding: 10px 12px; border-radius: 10px; border: 1.5px solid var(--hair); background: var(--paper); color: var(--ink); cursor: pointer; }
+.v8p-files li > button:hover, .v8p-files li.is-open > button { border-color: var(--edge); }
+.v8p-fname { flex: 1; min-width: 0; font: 700 14px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v8p-files em { font: 700 12px var(--mono); font-style: normal; }
+.v8p-files em.is-plus { color: var(--moss); }
+.v8p-files em.is-minus { color: var(--brick); }
+.v8p-files li > button > i { font-style: normal; color: var(--ink3); }
+.v8p-files .v8p-diff { max-height: 320px; margin-top: 6px; }
+.v8p-diff i.is-plus { color: var(--moss); }
+.v8p-diff i.is-minus { color: var(--brick); }
+.v8p-out .v8p-verify { margin-top: 22px; }
+.v8p-out .v8p-verify summary { cursor: pointer; }
+.v8p-out .v8p-verify code { display: block; margin-top: 8px; font: 500 12.5px/1.6 var(--mono); color: var(--ink2); white-space: pre-wrap; }
+.v8p-out .v8p-verify code.is-out { color: var(--moss); }
+
+/* 工位 panel: title, the original words folded, everything above the talk box scrolls (老板 2026-11-28). */
+.v8p-panelscroll { position: absolute; left: 0; right: 0; top: 0; bottom: 84px; overflow-y: auto; padding-right: 10px; }
+.v8p-slot .v8p-panel > .v8p-ask { position: absolute; left: 0; right: 0; bottom: 0; }
+.v8p-slottitle { font: 900 26px/1.3 var(--text); letter-spacing: -.01em; margin: 10px 0 12px; color: var(--ink); }
+.v8p-slot .v8p-steps { margin: 20px 0 20px; }
+.v8p-bignote q { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }

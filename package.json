@@ -1,7 +1,7 @@
 {
   "name": "beastie-works",
   "productName": "Beastie Works",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "description": "小怪工坊：把本机的 AI agent 叫到一起，替你和朋友干活。",
   "main": "out/main/index.js",

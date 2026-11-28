@@ -511,6 +511,11 @@ export function describePermission(call: Json): { tool: string; detail: string }
     if (typeof cwd === 'string') lines.push('Cwd: ' + cwd);
   }
   for (const p of paths) lines.push('Path: ' + p);
+  // A tool from one of the person's connectors (MCP), named the way Claude Code names it (claude-agent-acp puts the
+  // name in _meta.claudeCode.toolName; other agents may only say it in the title).
+  const meta = (call._meta && typeof call._meta === 'object' ? call._meta : {}) as { claudeCode?: { toolName?: unknown } };
+  const mcp = [meta.claudeCode?.toolName, call.title].find(v => typeof v === 'string' && /^mcp__[^_]/.test(v));
+  if (typeof mcp === 'string') lines.push('Connector: ' + mcp.split(/\s/)[0]);
   const tool = kind === 'edit' ? 'edit' : kind === 'execute' || command ? 'bash' : kind;
   return { tool, detail: lines.join('\n') };
 }
