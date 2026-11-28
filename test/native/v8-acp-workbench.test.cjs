@@ -141,8 +141,10 @@ test('work that reached the boss unreviewed (reviewer signed out) can be reviewe
   b.say('加一个问候文件');
   await until(() => b.scheduler.tickets().length === 1, 'a ticket');
   const id = b.scheduler.tickets()[0].id;
-  // Sign the reviewer out just before it starts.
-  await until(() => b.scheduler.latestReport(id)?.kind === 'done', 'the report');
+  // Sign out once the gremlin's own session exists, so the reviewer cannot slip in first on a slow machine
+  // (GitHub's runner did: writing the flag after the report raced the reviewer's session).
+  const light = path.join(log, 'light.txt');
+  await until(() => fs.existsSync(light) && /^ticket-1 /m.test(fs.readFileSync(light, 'utf8')), "the gremlin's session");
   fs.writeFileSync(flag, 'x');
   await until(() => /审查没给结论/.test(b.delivery(id)?.reviewNote ?? ''), 'review skipped', 40000);
   assert.equal(b.scheduler.tickets()[0].state, 'REVIEW');
